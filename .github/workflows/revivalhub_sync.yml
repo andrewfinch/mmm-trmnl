@@ -65,17 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p site
-          python - << 'PY'
-import json, pathlib
-with open("payload.json","r",encoding="utf-8") as f:
-    p=json.load(f)
-# Publish a compatibility object:
-# - Top-level fields (for simple consumers)
-# - "payload": {...} (matches Display/Polling conventions)
-# - "data": {...} (matches Plugin Data API conventions)
-wrapped={"payload": p, "data": p, **p}
-pathlib.Path("site/payload.json").write_text(json.dumps(wrapped), encoding="utf-8")
-PY
+          cp payload.json site/payload.json
 
       - name: Upload Pages artifact
         if: always()
