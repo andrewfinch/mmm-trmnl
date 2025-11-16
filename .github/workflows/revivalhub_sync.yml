@@ -18,6 +18,7 @@ jobs:
       REVIVALHUB_URL: ${{ secrets.REVIVALHUB_URL }}
       TRMNL_API_KEY: ${{ secrets.TRMNL_API_KEY }}
       TRMNL_PLUGIN_ID: ${{ secrets.TRMNL_PLUGIN_ID }}
+      TRMNL_BASE_URL: ${{ secrets.TRMNL_BASE_URL }}
       REVIVALHUB_THEATRE: ${{ vars.REVIVALHUB_THEATRE }}
       REVIVALHUB_TIMEZONE: ${{ vars.REVIVALHUB_TIMEZONE }}
       REVIVALHUB_LOOKAHEAD_HOURS: ${{ vars.REVIVALHUB_LOOKAHEAD_HOURS }}
@@ -46,6 +47,7 @@ jobs:
             --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
             --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
             --trmnl-mode plugin --dry-run \
+            --trmnl-base-url "${TRMNL_BASE_URL:-https://api.usetrmnl.com}" \
             --verbose \
             --payload-path payload.json
 
@@ -62,6 +64,7 @@ jobs:
             --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
             --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
             --trmnl-mode plugin \
+            --trmnl-base-url "${TRMNL_BASE_URL:-https://api.usetrmnl.com}" \
             --verbose
 
       - name: Fallback upload via curl (DNS bypass)
@@ -71,31 +74,55 @@ jobs:
           REVIVALHUB_URL: ${{ env.REVIVALHUB_URL }}
         run: |
           set -euo pipefail
-          # Wrap the built payload for Plugin Data API
+          # Rebuild payload to ensure payload.json exists and is non-empty
+          python src/revivalhub_trmnl_sync.py \
+            --revivalhub-url "${REVIVALHUB_URL}" \
+            --theatre "${REVIVALHUB_THEATRE:-new beverly}" \
+            --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
+            --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
+            --trmnl-mode plugin --dry-run \
+            --trmnl-base-url "${TRMNL_BASE_URL:-https://api.usetrmnl.com}" \
+            --payload-path payload.json
+          # Wrap the built payload for Plugin Data API and derive host/endpoint from TRMNL_BASE_URL
+          META=$(python - << 'PY'
+import os, json, sys, urllib.parse
+base=os.environ.get("TRMNL_BASE_URL","https://api.usetrmnl.com").rstrip("/")
+u=urllib.parse.urlparse(base if "://" in base else "https://"+base)
+host=u.netloc or u.path
+scheme=u.scheme or "https"
+prefix=u.path if u.netloc else ""
+plugin_id=os.environ.get("TRMNL_PLUGIN_ID","")
+endpoint=f"{prefix}/v1/plugins/{plugin_id}/data"
+print(json.dumps({"host":host,"scheme":scheme,"endpoint":endpoint}))
+PY
+)
+          echo "$META" > meta.json
+          HOST=$(python -c 'import json;print(json.load(open("meta.json"))["host"])')
+          SCHEME=$(python -c 'import json;print(json.load(open("meta.json"))["scheme"])')
+          ENDPOINT=$(python -c 'import json;print(json.load(open("meta.json"))["endpoint"])')
+          # Build body
           python - << 'PY'
-          import json,sys
-          with open("payload.json","r",encoding="utf-8") as f:
-              data=json.load(f)
-          with open("plugin_body.json","w",encoding="utf-8") as f:
-              json.dump({"data":data}, f)
-          PY
-          # Resolve api.usetrmnl.com via Cloudflare DoH to bypass runner DNS
+import json
+data=json.load(open("payload.json","r",encoding="utf-8"))
+json.dump({"data": data}, open("plugin_body.json","w",encoding="utf-8"))
+PY
+          # Resolve host via Cloudflare DoH to bypass runner DNS
           IP=$(curl -sH 'accept: application/dns-json' \
-            'https://cloudflare-dns.com/dns-query?name=api.usetrmnl.com&type=A' \
+            "https://cloudflare-dns.com/dns-query?name=${HOST}&type=A" \
             | python - << 'PY'
-          import json,sys
-          d=json.load(sys.stdin)
-          ans=[a.get("data") for a in d.get("Answer",[]) if a.get("type")==1]
-          print(ans[0] if ans else "")
-          PY
-          )
+import json,sys
+d=json.load(sys.stdin)
+ans=[a.get("data") for a in d.get("Answer",[]) if a.get("type")==1]
+print(ans[0] if ans else "")
+PY
+)
           if [ -z "$IP" ]; then
-            echo "No A record returned from DoH; cannot fallback."
+            echo "No A record returned from DoH for ${HOST}; cannot fallback."
             exit 1
           fi
           # Post using resolved IP while keeping Host/SNI via --resolve
-          curl -fsS -X POST "https://api.usetrmnl.com/v1/plugins/${TRMNL_PLUGIN_ID}/data" \
-            --resolve "api.usetrmnl.com:443:${IP}" \
+          curl -fsS -X POST "${SCHEME}://${HOST}${ENDPOINT}" \
+            --resolve "${HOST}:443:${IP}" \
             -H "Authorization: Bearer ${TRMNL_API_KEY}" \
             -H "Content-Type: application/json" \
             --data @plugin_body.json -i
