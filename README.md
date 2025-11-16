@@ -2,7 +2,7 @@
 
 This repository packages everything you need to surface the next RevivalHub screening on a TRMNL OG device:
 
-- `src/revivalhub_trmnl_sync.py` – Fetch RevivalHub’s JSON dump, select the next screening for a chosen venue, build the plugin payload, and push it to TRMNL via the Plugin Data or Display API.
+- `src/revivalhub_trmnl_sync.py` – Fetch RevivalHub’s JSON dump, select the next screening for a chosen venue, and build the plugin payload used by your TRMNL private plugin.
 - `plugin/screen.liquid` – Liquid + CSS template tuned for the 7.5" TRMNL OG e‑ink screen (800×480, 4 grayscale). Shows poster art, venue, film title, formatted showtime, and an optional QR code.[^device]
 - `.github/workflows/revivalhub_sync.yml` – Scheduled GitHub Action that runs the sync script every 15 minutes (or on demand) using repository secrets/variables.
 - `docs/trmnl_revival_brief.md` – Architecture notes, constraints, and deployment considerations distilled from the TRMNL developer docs.[^docs]
@@ -15,7 +15,7 @@ This repository packages everything you need to surface the next RevivalHub scre
 - Python 3.11+
 - `requests` (installed via `pip install -r requirements.txt`)
 - RevivalHub JSON endpoint (public or authenticated)
-- TRMNL Developer Edition account with API key + either a plugin ID or display/scene IDs[^dev]
+- TRMNL Developer Edition account and a Private Plugin configured to fetch data via Webhooks (pull)[^dev]
 
 [^dev]: https://usetrmnl.com/blog/developer-edition?utm_source=openai
 
@@ -43,27 +43,24 @@ This repository packages everything you need to surface the next RevivalHub scre
    ```bash
    python src/revivalhub_trmnl_sync.py --dry-run --payload-path payload.json
    ```
-3. Remove `--dry-run`; if the TRMNL fields are not already present in `.env`, pass one of:
-   - `--trmnl-mode plugin --trmnl-plugin-id <PLUGIN_ID>`
-   - `--trmnl-mode display --trmnl-display-id <DISPLAY_ID> --trmnl-scene-id <SCENE_ID>`
+3. The repo’s GitHub Action publishes `payload.json` for your plugin to fetch; you typically won’t POST from local.
 
 The script will exit with code 2 if `--fail-on-missing` is set and no matching show is found within the lookahead window.
 
-## GitHub Action Automation
+## GitHub Action Automation (Golden Path)
 
 The workflow in `.github/workflows/revivalhub_sync.yml`:
 
 - Runs on a `*/15 * * * *` cron plus manual `workflow_dispatch`.
 - Sets up Python, installs dependencies, and executes the sync CLI.
 - Uploads the JSON payload as a build artifact for troubleshooting.
+- Publishes `payload.json` to GitHub Pages. Configure your private plugin to fetch this URL (pull model per TRMNL docs).[^go]
 
 Configure the following repository **secrets**:
 
 | Secret | Purpose |
 | --- | --- |
 | `REVIVALHUB_URL` | RevivalHub JSON dump |
-| `TRMNL_API_KEY` | API key from TRMNL dashboard |
-| `TRMNL_PLUGIN_ID` or `TRMNL_DISPLAY_ID`/`TRMNL_SCENE_ID` | Delivery target |
 
 Optional repository **variables** (or inline overrides):
 
@@ -76,6 +73,15 @@ Optional repository **variables** (or inline overrides):
 Adjust the cron cadence to stay within TRMNL’s published webhook limits (12/hour for standard accounts, 30/hour for TRMNL+).[^^limits]
 
 [^^limits]: https://docs.usetrmnl.com/go/private-plugins/create-a-screen?utm_source=openai
+
+### Point your plugin to the published JSON
+1. Enable GitHub Pages for this repo (Source: GitHub Actions).
+2. After the workflow runs, `payload.json` is published at:
+   - `https://<your-user-or-org>.github.io/<repo>/payload.json`
+3. In the TRMNL dashboard, open your Private Plugin and set its data/webhook source to the URL above. The Liquid template (`plugin/screen.liquid`) expects `title`, `subtitle`, `theatre`, `poster_url`, `ticket_url`, and `show_qr`, matching this payload.
+4. See TRMNL docs (Private Plugins → Webhooks / Screen Templating / Private API) for the pull‑model workflow.[^go]
+
+[^go]: https://docs.usetrmnl.com/go/
 
 ## TRMNL Plugin Template
 

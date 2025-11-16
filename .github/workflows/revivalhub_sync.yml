@@ -12,12 +12,14 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
     permissions:
       contents: read
+      pages: write
+      id-token: write
     env:
       REVIVALHUB_URL: ${{ secrets.REVIVALHUB_URL }}
-      TRMNL_API_KEY: ${{ secrets.TRMNL_API_KEY }}
-      TRMNL_PLUGIN_ID: ${{ secrets.TRMNL_PLUGIN_ID }}
       REVIVALHUB_THEATRE: ${{ vars.REVIVALHUB_THEATRE }}
       REVIVALHUB_TIMEZONE: ${{ vars.REVIVALHUB_TIMEZONE }}
       REVIVALHUB_LOOKAHEAD_HOURS: ${{ vars.REVIVALHUB_LOOKAHEAD_HOURS }}
@@ -49,77 +51,7 @@ jobs:
             --verbose \
             --payload-path payload.json
 
-      - name: Upload via Python (normal path)
-        id: py_upload
-        continue-on-error: true
-        env:
-          REVIVALHUB_URL: ${{ env.REVIVALHUB_URL }}
-        run: |
-          set -euo pipefail
-          python src/revivalhub_trmnl_sync.py \
-            --revivalhub-url "${REVIVALHUB_URL}" \
-            --theatre "${REVIVALHUB_THEATRE:-new beverly}" \
-            --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
-            --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
-            --trmnl-mode plugin \
-            --verbose
-
-      - name: Fallback upload via curl (DNS bypass)
-        id: fallback_upload
-        if: steps.py_upload.outcome == 'failure'
-        env:
-          REVIVALHUB_URL: ${{ env.REVIVALHUB_URL }}
-        run: |
-          set -euo pipefail
-          # Ensure payload.json exists and is populated
-          python src/revivalhub_trmnl_sync.py \
-            --revivalhub-url "${REVIVALHUB_URL}" \
-            --theatre "${REVIVALHUB_THEATRE:-new beverly}" \
-            --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
-            --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
-            --trmnl-mode plugin --dry-run \
-            --payload-path payload.json
-          # Wrap the built payload for Plugin Data API
-          python -c 'import json; d=json.load(open("payload.json","r",encoding="utf-8")); json.dump({"data": d}, open("plugin_body.json","w",encoding="utf-8"))'
-          # Try multiple API hosts with DoH resolution and --resolve
-          OK=0
-          for HOST in api.usetrmnl.com api.trmnl.app; do
-            echo "Resolving ${HOST} via Cloudflare DoH…"
-            IP=$(curl -sS -H 'accept: application/dns-json' "https://cloudflare-dns.com/dns-query?name=${HOST}&type=A" \
-              | python -c 'import sys,json; d=json.load(sys.stdin); print(next((a.get("data") for a in d.get("Answer",[]) if a.get("type")==1),""), end="")')
-            if [ -z "$IP" ]; then
-              echo "Cloudflare DoH failed; trying Google DoH…"
-              IP=$(curl -sS "https://dns.google/resolve?name=${HOST}&type=A" \
-                | python -c 'import sys,json; d=json.load(sys.stdin); print(next((a.get("data") for a in d.get("Answer",[]) if a.get("type")==1),""), end="")')
-            fi
-            if [ -z "$IP" ]; then
-              echo "No A record for ${HOST}; skipping."
-              continue
-            fi
-            echo "Resolved ${HOST} -> ${IP}; posting…"
-            set +e
-            HTTP=$(curl -sS -o /tmp/resp.txt -w "%{http_code}" -X POST "https://${HOST}/v1/plugins/${TRMNL_PLUGIN_ID}/data" \
-              --resolve "${HOST}:443:${IP}" \
-              -H "Authorization: Bearer ${TRMNL_API_KEY}" \
-              -H "Content-Type: application/json" \
-              --data @plugin_body.json)
-            RC=$?
-            set -e
-            echo "HTTP=${HTTP} rc=${RC}"
-            if [ "$RC" -eq 0 ] && [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 300 ]; then
-              echo "Upload succeeded via ${HOST}"
-              OK=1
-              break
-            else
-              echo "Upload failed via ${HOST}; response (first 200 bytes):"
-              head -c 200 /tmp/resp.txt || true
-              echo
-            fi
-          done
-          if [ "$OK" -ne 1 ]; then
-            echo "All DNS-bypass upload attempts failed."
-            exit 1
-          fi
+      # Golden path: publish payload.json for TRMNL Webhooks (pull model)
 
       - name: Upload payload artifact
         if: always()
@@ -127,4 +59,22 @@ jobs:
         with:
           name: trmnl-payload
           path: payload.json
+
+      - name: Prepare Pages artifact
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp payload.json site/payload.json
+
+      - name: Upload Pages artifact
+        if: always()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        if: always()
+        id: deployment
+        uses: actions/deploy-pages@v4
 
