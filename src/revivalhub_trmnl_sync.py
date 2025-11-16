@@ -68,9 +68,6 @@ def _format_time(value: dt.datetime) -> str:
     return time_token
 
 
-*** End Patch*** }```
-
-
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -372,9 +369,6 @@ def build_placeholder_payload(theatre: str, timezone: str) -> Mapping[str, Any]:
         "show_qr": False,
         "refreshed_at": now.isoformat(),
     }
-
-
-*** End Patch*** }```াঙ
 
 
 def _coalesce(entry: Mapping[str, Any], keys: Iterable[str]) -> Any | None:
