@@ -35,7 +35,23 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Sync TRMNL payload
+      - name: Build payload (dry run)
+        env:
+          REVIVALHUB_URL: ${{ env.REVIVALHUB_URL }}
+        run: |
+          set -euo pipefail
+          python src/revivalhub_trmnl_sync.py \
+            --revivalhub-url "${REVIVALHUB_URL}" \
+            --theatre "${REVIVALHUB_THEATRE:-new beverly}" \
+            --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
+            --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
+            --trmnl-mode plugin --dry-run \
+            --verbose \
+            --payload-path payload.json
+
+      - name: Upload via Python (normal path)
+        id: py_upload
+        continue-on-error: true
         env:
           REVIVALHUB_URL: ${{ env.REVIVALHUB_URL }}
         run: |
@@ -46,8 +62,43 @@ jobs:
             --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
             --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
             --trmnl-mode plugin \
-            --verbose \
-            --payload-path payload.json
+            --verbose
+
+      - name: Fallback upload via curl (DNS bypass)
+        id: fallback_upload
+        if: steps.py_upload.outcome == 'failure'
+        env:
+          REVIVALHUB_URL: ${{ env.REVIVALHUB_URL }}
+        run: |
+          set -euo pipefail
+          # Wrap the built payload for Plugin Data API
+          python - << 'PY'
+          import json,sys
+          with open("payload.json","r",encoding="utf-8") as f:
+              data=json.load(f)
+          with open("plugin_body.json","w",encoding="utf-8") as f:
+              json.dump({"data":data}, f)
+          PY
+          # Resolve api.usetrmnl.com via Cloudflare DoH to bypass runner DNS
+          IP=$(curl -sH 'accept: application/dns-json' \
+            'https://cloudflare-dns.com/dns-query?name=api.usetrmnl.com&type=A' \
+            | python - << 'PY'
+          import json,sys
+          d=json.load(sys.stdin)
+          ans=[a.get("data") for a in d.get("Answer",[]) if a.get("type")==1]
+          print(ans[0] if ans else "")
+          PY
+          )
+          if [ -z "$IP" ]; then
+            echo "No A record returned from DoH; cannot fallback."
+            exit 1
+          fi
+          # Post using resolved IP while keeping Host/SNI via --resolve
+          curl -fsS -X POST "https://api.usetrmnl.com/v1/plugins/${TRMNL_PLUGIN_ID}/data" \
+            --resolve "api.usetrmnl.com:443:${IP}" \
+            -H "Authorization: Bearer ${TRMNL_API_KEY}" \
+            -H "Content-Type: application/json" \
+            --data @plugin_body.json -i
 
       - name: Upload payload artifact
         if: always()
