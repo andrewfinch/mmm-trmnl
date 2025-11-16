@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Bridge RevivalHub screening data into a TRMNL private plugin payload."""
+"""Build a minimal JSON payload for a TRMNL Private Plugin (Polling).
+
+Fetch RevivalHub's JSON dump, select the next screening for a venue, and emit a
+compact payload consumed by the Liquid template. No TRMNL API calls are made;
+GitHub Actions publishes the JSON to GitHub Pages for the plugin to poll.
+"""
 from __future__ import annotations
 
 import argparse
@@ -20,8 +25,6 @@ except ImportError:  # pragma: no cover
     ZoneInfo = None  # type: ignore[assignment]
     ZoneInfoNotFoundError = Exception  # type: ignore[misc,assignment]
 
-
-ISO_FORMAT = "%a • %b {day} • {time}"
 
 # Public, resized poster base used by RevivalHub uploads
 POSTER_IMG_BASE = (
@@ -65,85 +68,42 @@ def _format_time(value: dt.datetime) -> str:
     return time_token
 
 
-def load_env_file(path: Path) -> None:
-    if not path or not path.exists():
-        return
-    for raw_line in path.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
-
-
-def _env_flag(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.lower() in {"1", "true", "yes", "on"}
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        logging.warning(
-            "Invalid integer for %s=%s; falling back to %s.", name, raw, default
-        )
-        return default
+*** End Patch*** }```
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--revivalhub-url",
-        default=os.environ.get("REVIVALHUB_URL"),
-        required="REVIVALHUB_URL" not in os.environ,
+        required=True,
         help="JSON endpoint that exposes RevivalHub screening data.",
     )
     parser.add_argument(
-        "--list-venues",
-        action="store_true",
-        help="List venues from the RevivalHub dump and exit.",
-    )
-    parser.add_argument(
         "--theatre",
-        default=os.environ.get("REVIVALHUB_THEATRE"),
-        required="REVIVALHUB_THEATRE" not in os.environ,
+        required=True,
         help="Slug or name of the theatre to track (case-insensitive substring).",
     )
     parser.add_argument(
         "--lookahead-hours",
         type=int,
-        default=_env_int("REVIVALHUB_LOOKAHEAD_HOURS", 96),
+        default=96,
         help="Only consider shows starting within this many hours from now.",
     )
     parser.add_argument(
         "--timezone",
-        default=os.environ.get("REVIVALHUB_TIMEZONE", "America/Los_Angeles"),
+        default="America/Los_Angeles",
         help="IANA timezone used for formatting showtimes.",
     )
     parser.add_argument(
         "--show-qr",
         action="store_true",
-        default=_env_flag("REVIVALHUB_SHOW_QR", False),
+        default=False,
         help="Set this flag to request a QR block on the TRMNL template.",
-    )
-    parser.add_argument(
-        "--no-show-qr",
-        dest="show_qr",
-        action="store_false",
-        help="Disable the QR block even if the environment enables it.",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print payload locally without calling the TRMNL API.",
+        help="Print payload to stdout (always writes --payload-path when provided).",
     )
     parser.add_argument(
         "--fail-on-missing",
@@ -155,37 +115,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Optional path to write the computed payload as JSON.",
     )
     parser.add_argument(
-        "--trmnl-mode",
-        choices=("plugin", "display"),
-        default=os.environ.get("TRMNL_MODE", "plugin"),
-        help="Select Plugin Data API ('plugin') or Display API ('display') delivery.",
-    )
-    parser.add_argument(
-        "--trmnl-base-url",
-        default=os.environ.get("TRMNL_BASE_URL", "https://api.usetrmnl.com"),
-        help="Override the TRMNL API base URL (default: %(default)s).",
-    )
-    parser.add_argument(
-        "--trmnl-api-key",
-        default=os.environ.get("TRMNL_API_KEY"),
-        help="TRMNL API key (can also be set via TRMNL_API_KEY).",
-    )
-    parser.add_argument(
-        "--trmnl-plugin-id",
-        default=os.environ.get("TRMNL_PLUGIN_ID"),
-        help="Target plugin ID when using plugin mode.",
-    )
-    parser.add_argument(
-        "--trmnl-display-id",
-        default=os.environ.get("TRMNL_DISPLAY_ID"),
-        help="Target display ID when using display mode.",
-    )
-    parser.add_argument(
-        "--trmnl-scene-id",
-        default=os.environ.get("TRMNL_SCENE_ID"),
-        help="Scene/screen identifier needed for the Display API.",
-    )
-    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable debug logging.",
@@ -194,29 +123,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    load_env_file(Path(os.environ.get("REVIVALHUB_ENV_FILE", ".env")))
     args = parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(message)s",
     )
     logging.debug("Arguments: %s", args)
-
-    if args.list_venues:
-        try:
-            resp = requests.get(args.revivalhub_url, timeout=30)
-            resp.raise_for_status()
-            src = resp.json()
-            index = _build_venue_index(src)
-            if not index:
-                print("No venues found in dump.", file=sys.stderr)
-                return 1
-            for vid, name in sorted(index.items(), key=lambda kv: kv[1].lower()):
-                print(f"{vid}\t{name}")
-            return 0
-        except Exception as exc:
-            logging.error("Failed to list venues: %s", exc)
-            return 1
 
     payload = fetch_payload(
         revivalhub_url=args.revivalhub_url,
@@ -232,34 +144,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         logging.info("Wrote payload to %s", args.payload_path)
 
     if args.dry_run:
-        logging.info("Dry run enabled, skipping TRMNL API upload.")
         print(json.dumps(payload, indent=2))
         return 0
 
-    if not args.trmnl_api_key:
-        logging.error("Missing TRMNL API key (set --trmnl-api-key or TRMNL_API_KEY).")
-        return 1
-
-    if args.trmnl_mode == "plugin" and not args.trmnl_plugin_id:
-        logging.error("Plugin mode selected but --trmnl-plugin-id is missing.")
-        return 1
-    if args.trmnl_mode == "display" and (
-        not args.trmnl_display_id or not args.trmnl_scene_id
-    ):
-        logging.error(
-            "Display mode requires both --trmnl-display-id and --trmnl-scene-id."
-        )
-        return 1
-
-    send_payload_to_trmnl(
-        payload=payload,
-        mode=args.trmnl_mode,
-        api_key=args.trmnl_api_key,
-        plugin_id=args.trmnl_plugin_id,
-        display_id=args.trmnl_display_id,
-        scene_id=args.trmnl_scene_id,
-        base_url=args.trmnl_base_url,
-    )
+    # Not dry-run: we already wrote the file if --payload-path was provided.
     return 0
 
 
@@ -486,33 +374,7 @@ def build_placeholder_payload(theatre: str, timezone: str) -> Mapping[str, Any]:
     }
 
 
-def send_payload_to_trmnl(
-    payload: Mapping[str, Any],
-    mode: str,
-    api_key: str,
-    plugin_id: str | None,
-    display_id: str | None,
-    scene_id: str | None,
-    base_url: str,
-) -> None:
-    session = requests.Session()
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    base = base_url.rstrip("/")
-    if mode == "plugin":
-        url = f"{base}/v1/plugins/{plugin_id}/data"
-        body = {"data": payload}
-    else:
-        url = f"{base}/v1/displays/{display_id}/scenes/{scene_id}"
-        body = {"payload": payload}
-    logging.info("Posting payload to %s", url)
-    response = session.post(url, headers=headers, json=body, timeout=30)
-    if response.status_code >= 400:
-        logging.error("TRMNL API error: %s %s", response.status_code, response.text)
-        response.raise_for_status()
-    logging.info("TRMNL API accepted payload (status %s).", response.status_code)
+*** End Patch*** }```াঙ
 
 
 def _coalesce(entry: Mapping[str, Any], keys: Iterable[str]) -> Any | None:

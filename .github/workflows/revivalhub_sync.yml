@@ -2,7 +2,7 @@ name: Sync RevivalHub to TRMNL
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "0 */4 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -47,7 +47,7 @@ jobs:
             --theatre "${REVIVALHUB_THEATRE:-new beverly}" \
             --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
             --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
-            --trmnl-mode plugin --dry-run \
+            --dry-run \
             --verbose \
             --payload-path payload.json
 
