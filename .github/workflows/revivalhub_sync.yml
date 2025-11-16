@@ -66,6 +66,13 @@ jobs:
           set -euo pipefail
           mkdir -p site
           cp payload.json site/payload.json
+          python - <<'PY'
+import json, pathlib
+payload = json.load(open('payload.json'))
+# Also publish a wrapped body that matches Plugin Data API shape and flips on debug overlay
+wrapped = {"data": payload, "debug": True}
+pathlib.Path('site/plugin_body.json').write_text(json.dumps(wrapped, indent=2))
+PY
 
       - name: Upload Pages artifact
         if: always()

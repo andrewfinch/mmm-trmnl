@@ -1,6 +1,24 @@
-{% assign poster_url = data.poster_url %}
-{% assign show_qr = data.show_qr | default: false %}
-{% assign ticket_url = data.ticket_url %}
+{% comment %}
+Resolve context from multiple shapes:
+- Webhook Plugin Data API: data.*
+- Display API: payload.*
+- Polling/static: root keys (no namespace)
+{% endcomment %}
+{% assign ctx = data %}
+{% if ctx == blank %}{% assign ctx = payload %}{% endif %}
+{% if ctx == blank %}{% assign ctx = body %}{% endif %}
+{% if ctx == blank %}{% assign ctx = response %}{% endif %}
+{% if ctx == blank %}{% assign ctx = content %}{% endif %}
+{% if ctx == blank %}{% assign ctx = json %}{% endif %}
+
+{% assign debug = debug | default: ctx.debug | default: data.debug | default: payload.debug | default: false %}
+
+{% assign title = ctx.title | default: data.title | default: payload.title | default: body.title | default: response.title | default: data.data.title | default: payload.data.title | default: title %}
+{% assign subtitle = ctx.subtitle | default: data.subtitle | default: payload.subtitle | default: body.subtitle | default: response.subtitle | default: data.data.subtitle | default: payload.data.subtitle | default: subtitle %}
+{% assign theatre = ctx.theatre | default: data.theatre | default: payload.theatre | default: body.theatre | default: response.theatre | default: data.data.theatre | default: payload.data.theatre | default: theatre %}
+{% assign poster_url = ctx.poster_url | default: data.poster_url | default: payload.poster_url | default: body.poster_url | default: response.poster_url | default: data.data.poster_url | default: payload.data.poster_url | default: poster_url %}
+{% assign ticket_url = ctx.ticket_url | default: data.ticket_url | default: payload.ticket_url | default: body.ticket_url | default: response.ticket_url | default: data.data.ticket_url | default: payload.data.ticket_url | default: ticket_url %}
+{% assign show_qr = ctx.show_qr | default: data.show_qr | default: payload.show_qr | default: body.show_qr | default: response.show_qr | default: data.data.show_qr | default: payload.data.show_qr | default: false %}
 
 <style>
   :root {
@@ -27,6 +45,7 @@
     padding: 32px;
     gap: 24px;
     background: var(--bg);
+    position: relative;
   }
 
   .poster {
@@ -106,20 +125,33 @@
     max-width: 200px;
     color: var(--muted);
   }
+
+  .debug {
+    position: absolute;
+    left: 12px;
+    bottom: 8px;
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--muted);
+    background: rgba(253,253,253,0.85);
+    padding: 4px 6px;
+    border: 1px solid var(--stroke);
+    border-radius: 6px;
+  }
 </style>
 
 <div class="screen">
   <div class="poster">
     {% if poster_url %}
-      <img src="{{ poster_url }}" alt="{{ data.title | escape }} poster" />
+      <img src="{{ poster_url }}" alt="{{ title | escape }} poster" />
     {% else %}
       <div class="poster--placeholder">Poster unavailable</div>
     {% endif %}
   </div>
   <div class="details">
-    <p class="details__theatre">{{ data.theatre | default: "RevivalHub" }}</p>
-    <h1 class="details__title">{{ data.title | default: "Coming Soon" }}</h1>
-    <p class="details__subtitle">{{ data.subtitle | default: "Showtime TBD" }}</p>
+    <p class="details__theatre">{{ theatre | default: "RevivalHub" }}</p>
+    <h1 class="details__title">{{ title | default: "Coming Soon" }}</h1>
+    <p class="details__subtitle">{{ subtitle | default: "Showtime TBD" }}</p>
 
     {% if show_qr and ticket_url %}
     <div class="qr">
@@ -137,5 +169,10 @@
     </div>
     {% endif %}
   </div>
+  {% if debug %}
+    <div class="debug">
+      title={{ title | default: "∅" }} | poster={{ poster_url | default: "∅" }} | theatre={{ theatre | default: "∅" }} | show_qr={{ show_qr | default: "∅" }}
+    </div>
+  {% endif %}
 </div>
 
