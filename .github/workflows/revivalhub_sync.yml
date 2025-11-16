@@ -80,42 +80,17 @@ jobs:
             --trmnl-mode plugin --dry-run \
             --payload-path payload.json
           # Wrap the built payload for Plugin Data API
-          python - << 'PY'
-          import json,sys
-          with open("payload.json","r",encoding="utf-8") as f:
-              data=json.load(f)
-          with open("plugin_body.json","w",encoding="utf-8") as f:
-              json.dump({"data":data}, f)
-          PY
+          python -c 'import json; d=json.load(open("payload.json","r",encoding="utf-8")); json.dump({"data": d}, open("plugin_body.json","w",encoding="utf-8"))'
           # Try multiple API hosts with DoH resolution and --resolve
           OK=0
           for HOST in api.usetrmnl.com api.trmnl.app; do
             echo "Resolving ${HOST} via Cloudflare DoH…"
-            IP=$(curl -sS -H 'accept: application/dns-json' \
-              "https://cloudflare-dns.com/dns-query?name=${HOST}&type=A" \
-              | python - << 'PY'
-            import json,sys
-            try:
-              d=json.load(sys.stdin)
-              ans=[a.get("data") for a in d.get("Answer",[]) if a.get("type")==1]
-              print(ans[0] if ans else "")
-            except Exception:
-              print("")
-            PY
-            )
+            IP=$(curl -sS -H 'accept: application/dns-json' "https://cloudflare-dns.com/dns-query?name=${HOST}&type=A" \
+              | python -c 'import sys,json; d=json.load(sys.stdin); print(next((a.get("data") for a in d.get("Answer",[]) if a.get("type")==1),""), end="")')
             if [ -z "$IP" ]; then
               echo "Cloudflare DoH failed; trying Google DoH…"
               IP=$(curl -sS "https://dns.google/resolve?name=${HOST}&type=A" \
-                | python - << 'PY'
-              import json,sys
-              try:
-                d=json.load(sys.stdin)
-                ans=[a.get("data") for a in d.get("Answer",[]) if a.get("type")==1]
-                print(ans[0] if ans else "")
-              except Exception:
-                print("")
-              PY
-              )
+                | python -c 'import sys,json; d=json.load(sys.stdin); print(next((a.get("data") for a in d.get("Answer",[]) if a.get("type")==1),""), end="")')
             fi
             if [ -z "$IP" ]; then
               echo "No A record for ${HOST}; skipping."
