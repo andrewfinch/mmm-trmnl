@@ -18,7 +18,6 @@ jobs:
       REVIVALHUB_URL: ${{ secrets.REVIVALHUB_URL }}
       TRMNL_API_KEY: ${{ secrets.TRMNL_API_KEY }}
       TRMNL_PLUGIN_ID: ${{ secrets.TRMNL_PLUGIN_ID }}
-      TRMNL_BASE_URL: ${{ secrets.TRMNL_BASE_URL }}
       REVIVALHUB_THEATRE: ${{ vars.REVIVALHUB_THEATRE }}
       REVIVALHUB_TIMEZONE: ${{ vars.REVIVALHUB_TIMEZONE }}
       REVIVALHUB_LOOKAHEAD_HOURS: ${{ vars.REVIVALHUB_LOOKAHEAD_HOURS }}
@@ -47,7 +46,6 @@ jobs:
             --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
             --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
             --trmnl-mode plugin --dry-run \
-            --trmnl-base-url "${TRMNL_BASE_URL:-https://api.usetrmnl.com}" \
             --verbose \
             --payload-path payload.json
 
@@ -64,7 +62,6 @@ jobs:
             --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
             --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
             --trmnl-mode plugin \
-            --trmnl-base-url "${TRMNL_BASE_URL:-https://api.usetrmnl.com}" \
             --verbose
 
       - name: Fallback upload via curl (DNS bypass)
@@ -74,93 +71,34 @@ jobs:
           REVIVALHUB_URL: ${{ env.REVIVALHUB_URL }}
         run: |
           set -euo pipefail
-          # Rebuild payload to ensure payload.json exists and is non-empty
-          python src/revivalhub_trmnl_sync.py \
-            --revivalhub-url "${REVIVALHUB_URL}" \
-            --theatre "${REVIVALHUB_THEATRE:-new beverly}" \
-            --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
-            --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
-            --trmnl-mode plugin --dry-run \
-            --trmnl-base-url "${TRMNL_BASE_URL:-https://api.usetrmnl.com}" \
-            --payload-path payload.json
           # Wrap the built payload for Plugin Data API
           python - << 'PY'
-import json
-data=json.load(open("payload.json","r",encoding="utf-8"))
-json.dump({"data": data}, open("plugin_body.json","w",encoding="utf-8"))
-PY
-          # Build host/endpoint candidates from TRMNL_BASE_URL (or sensible defaults)
-          META=$(python - << 'PY'
-import os, json, sys, urllib.parse
-base=os.environ.get("TRMNL_BASE_URL","").strip()
-plugin_id=os.environ.get("TRMNL_PLUGIN_ID","")
-if not base:
-    hosts=["api.usetrmnl.com","api.trmnl.app"]
-    print(json.dumps({"hosts":hosts,"scheme":"https","endpoint":f"/v1/plugins/{plugin_id}/data"})); sys.exit(0)
-base=base.rstrip("/")
-u=urllib.parse.urlparse(base if "://" in base else "https://"+base)
-host=u.netloc or u.path
-scheme=u.scheme or "https"
-prefix=u.path if u.netloc else ""
-endpoint=f"{prefix}/v1/plugins/{plugin_id}/data"
-print(json.dumps({"hosts":[host],"scheme":scheme,"endpoint":endpoint}))
-PY
-)
-          echo "$META" > meta.json
-          SCHEME=$(python -c 'import json;print(json.load(open("meta.json")).get("scheme","https"))' || echo "https")
-          ENDPOINT=$(python -c 'import json;print(json.load(open("meta.json"))["endpoint"])')
-          python - << 'PY'
-import json
-m=json.load(open("meta.json"))
-open("hosts.txt","w").write("\n".join(m.get("hosts",[])))
-PY
-          echo "Trying hosts:"
-          cat hosts.txt
-
-          # Try each host with DoH + curl --resolve
-          OK=0
-          while IFS= read -r HOST; do
-            echo "Resolving ${HOST} via DoH..."
-            IP=$(curl -sS -H 'accept: application/dns-json' \
-              "https://cloudflare-dns.com/dns-query?name=${HOST}&type=A" \
-              | python - << 'PY'
-import json,sys
-try:
-  d=json.load(sys.stdin)
-  ans=[a.get("data") for a in d.get("Answer",[]) if a.get("type")==1]
-  print(ans[0] if ans else "")
-except Exception:
-  print("")
-PY
-)
-            if [ -z "$IP" ]; then
-              echo "No A record from DoH for ${HOST}; skipping."
-              continue
-            fi
-            echo "Resolved ${HOST} -> ${IP}; posting..."
-            set +e
-            HTTP=$(curl -sS -o /tmp/resp.txt -w "%{http_code}" -X POST "${SCHEME}://${HOST}${ENDPOINT}" \
-              --resolve "${HOST}:443:${IP}" \
-              -H "Authorization: Bearer ${TRMNL_API_KEY}" \
-              -H "Content-Type: application/json" \
-              --data @plugin_body.json)
-            RC=$?
-            set -e
-            echo "HTTP status: $HTTP (rc=$RC)"
-            if [ "$RC" -eq 0 ] && [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 300 ]; then
-              echo "Upload succeeded via ${HOST}"
-              OK=1
-              break
-            else
-              echo "Upload failed via ${HOST}; first 200 bytes of response:"
-              head -c 200 /tmp/resp.txt || true
-              echo
-            fi
-          done < hosts.txt
-          if [ "$OK" -ne 1 ]; then
-            echo "All upload attempts failed."
+          import json,sys
+          with open("payload.json","r",encoding="utf-8") as f:
+              data=json.load(f)
+          with open("plugin_body.json","w",encoding="utf-8") as f:
+              json.dump({"data":data}, f)
+          PY
+          # Resolve api.usetrmnl.com via Cloudflare DoH to bypass runner DNS
+          IP=$(curl -sH 'accept: application/dns-json' \
+            'https://cloudflare-dns.com/dns-query?name=api.usetrmnl.com&type=A' \
+            | python - << 'PY'
+          import json,sys
+          d=json.load(sys.stdin)
+          ans=[a.get("data") for a in d.get("Answer",[]) if a.get("type")==1]
+          print(ans[0] if ans else "")
+          PY
+          )
+          if [ -z "$IP" ]; then
+            echo "No A record returned from DoH; cannot fallback."
             exit 1
           fi
+          # Post using resolved IP while keeping Host/SNI via --resolve
+          curl -fsS -X POST "https://api.usetrmnl.com/v1/plugins/${TRMNL_PLUGIN_ID}/data" \
+            --resolve "api.usetrmnl.com:443:${IP}" \
+            -H "Authorization: Bearer ${TRMNL_API_KEY}" \
+            -H "Content-Type: application/json" \
+            --data @plugin_body.json -i
 
       - name: Upload payload artifact
         if: always()
