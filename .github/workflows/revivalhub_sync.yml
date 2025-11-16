@@ -71,6 +71,14 @@ jobs:
           REVIVALHUB_URL: ${{ env.REVIVALHUB_URL }}
         run: |
           set -euo pipefail
+          # Ensure payload.json exists and is populated
+          python src/revivalhub_trmnl_sync.py \
+            --revivalhub-url "${REVIVALHUB_URL}" \
+            --theatre "${REVIVALHUB_THEATRE:-new beverly}" \
+            --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
+            --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
+            --trmnl-mode plugin --dry-run \
+            --payload-path payload.json
           # Wrap the built payload for Plugin Data API
           python - << 'PY'
           import json,sys
@@ -79,26 +87,64 @@ jobs:
           with open("plugin_body.json","w",encoding="utf-8") as f:
               json.dump({"data":data}, f)
           PY
-          # Resolve api.usetrmnl.com via Cloudflare DoH to bypass runner DNS
-          IP=$(curl -sH 'accept: application/dns-json' \
-            'https://cloudflare-dns.com/dns-query?name=api.usetrmnl.com&type=A' \
-            | python - << 'PY'
-          import json,sys
-          d=json.load(sys.stdin)
-          ans=[a.get("data") for a in d.get("Answer",[]) if a.get("type")==1]
-          print(ans[0] if ans else "")
-          PY
-          )
-          if [ -z "$IP" ]; then
-            echo "No A record returned from DoH; cannot fallback."
+          # Try multiple API hosts with DoH resolution and --resolve
+          OK=0
+          for HOST in api.usetrmnl.com api.trmnl.app; do
+            echo "Resolving ${HOST} via Cloudflare DoH…"
+            IP=$(curl -sS -H 'accept: application/dns-json' \
+              "https://cloudflare-dns.com/dns-query?name=${HOST}&type=A" \
+              | python - << 'PY'
+            import json,sys
+            try:
+              d=json.load(sys.stdin)
+              ans=[a.get("data") for a in d.get("Answer",[]) if a.get("type")==1]
+              print(ans[0] if ans else "")
+            except Exception:
+              print("")
+            PY
+            )
+            if [ -z "$IP" ]; then
+              echo "Cloudflare DoH failed; trying Google DoH…"
+              IP=$(curl -sS "https://dns.google/resolve?name=${HOST}&type=A" \
+                | python - << 'PY'
+              import json,sys
+              try:
+                d=json.load(sys.stdin)
+                ans=[a.get("data") for a in d.get("Answer",[]) if a.get("type")==1]
+                print(ans[0] if ans else "")
+              except Exception:
+                print("")
+              PY
+              )
+            fi
+            if [ -z "$IP" ]; then
+              echo "No A record for ${HOST}; skipping."
+              continue
+            fi
+            echo "Resolved ${HOST} -> ${IP}; posting…"
+            set +e
+            HTTP=$(curl -sS -o /tmp/resp.txt -w "%{http_code}" -X POST "https://${HOST}/v1/plugins/${TRMNL_PLUGIN_ID}/data" \
+              --resolve "${HOST}:443:${IP}" \
+              -H "Authorization: Bearer ${TRMNL_API_KEY}" \
+              -H "Content-Type: application/json" \
+              --data @plugin_body.json)
+            RC=$?
+            set -e
+            echo "HTTP=${HTTP} rc=${RC}"
+            if [ "$RC" -eq 0 ] && [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 300 ]; then
+              echo "Upload succeeded via ${HOST}"
+              OK=1
+              break
+            else
+              echo "Upload failed via ${HOST}; response (first 200 bytes):"
+              head -c 200 /tmp/resp.txt || true
+              echo
+            fi
+          done
+          if [ "$OK" -ne 1 ]; then
+            echo "All DNS-bypass upload attempts failed."
             exit 1
           fi
-          # Post using resolved IP while keeping Host/SNI via --resolve
-          curl -fsS -X POST "https://api.usetrmnl.com/v1/plugins/${TRMNL_PLUGIN_ID}/data" \
-            --resolve "api.usetrmnl.com:443:${IP}" \
-            -H "Authorization: Bearer ${TRMNL_API_KEY}" \
-            -H "Content-Type: application/json" \
-            --data @plugin_body.json -i
 
       - name: Upload payload artifact
         if: always()
