@@ -1,0 +1,58 @@
+name: Sync RevivalHub to TRMNL
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: revivalhub-sync-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      REVIVALHUB_URL: ${{ secrets.REVIVALHUB_URL }}
+      TRMNL_API_KEY: ${{ secrets.TRMNL_API_KEY }}
+      TRMNL_PLUGIN_ID: ${{ secrets.TRMNL_PLUGIN_ID }}
+      REVIVALHUB_THEATRE: ${{ vars.REVIVALHUB_THEATRE }}
+      REVIVALHUB_TIMEZONE: ${{ vars.REVIVALHUB_TIMEZONE }}
+      REVIVALHUB_LOOKAHEAD_HOURS: ${{ vars.REVIVALHUB_LOOKAHEAD_HOURS }}
+      REVIVALHUB_SHOW_QR: ${{ vars.REVIVALHUB_SHOW_QR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Sync TRMNL payload
+        env:
+          REVIVALHUB_URL: ${{ env.REVIVALHUB_URL }}
+        run: |
+          set -euo pipefail
+          python src/revivalhub_trmnl_sync.py \
+            --revivalhub-url "${REVIVALHUB_URL}" \
+            --theatre "${REVIVALHUB_THEATRE:-new beverly}" \
+            --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
+            --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
+            --trmnl-mode plugin \
+            --verbose \
+            --payload-path payload.json
+
+      - name: Upload payload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trmnl-payload
+          path: payload.json
+

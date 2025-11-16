@@ -1,0 +1,141 @@
+{% assign poster_url = data.poster_url %}
+{% assign show_qr = data.show_qr | default: false %}
+{% assign ticket_url = data.ticket_url %}
+
+<style>
+  :root {
+    --bg: #fdfdfd;
+    --text: #0f0f0f;
+    --muted: #5a5a5a;
+    --stroke: #c8c8c8;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  .screen {
+    box-sizing: border-box;
+    width: 800px;
+    height: 480px;
+    display: flex;
+    flex-direction: row;
+    padding: 32px;
+    gap: 24px;
+    background: var(--bg);
+  }
+
+  .poster {
+    flex: 0 0 420px;
+    height: 100%;
+    border-radius: 12px;
+    border: 1px solid var(--stroke);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #e8e8e8;
+  }
+
+  .poster img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: grayscale(100%);
+  }
+
+  .poster--placeholder {
+    font-size: 24px;
+    font-weight: 600;
+    text-transform: uppercase;
+    text-align: center;
+    color: var(--muted);
+    padding: 24px;
+  }
+
+  .details {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .details__theatre {
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 16px;
+    color: var(--muted);
+    margin: 0 0 8px 0;
+  }
+
+  .details__title {
+    font-size: 48px;
+    line-height: 1.05;
+    margin: 0 0 16px 0;
+  }
+
+  .details__subtitle {
+    font-size: 28px;
+    margin: 0 0 32px 0;
+  }
+
+  .qr {
+    margin-top: auto;
+    border-top: 1px solid var(--stroke);
+    padding-top: 24px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+
+  .qr__code {
+    width: 180px;
+    height: 180px;
+    border: 1px solid var(--stroke);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+  }
+
+  .qr__caption {
+    font-size: 20px;
+    max-width: 200px;
+    color: var(--muted);
+  }
+</style>
+
+<div class="screen">
+  <div class="poster">
+    {% if poster_url %}
+      <img src="{{ poster_url }}" alt="{{ data.title | escape }} poster" />
+    {% else %}
+      <div class="poster--placeholder">Poster unavailable</div>
+    {% endif %}
+  </div>
+  <div class="details">
+    <p class="details__theatre">{{ data.theatre | default: "RevivalHub" }}</p>
+    <h1 class="details__title">{{ data.title | default: "Coming Soon" }}</h1>
+    <p class="details__subtitle">{{ data.subtitle | default: "Showtime TBD" }}</p>
+
+    {% if show_qr and ticket_url %}
+    <div class="qr">
+      <div class="qr__code">
+        <img
+          src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&amp;data={{ ticket_url | url_encode }}"
+          alt="QR code for tickets"
+          width="180"
+          height="180"
+        />
+      </div>
+      <p class="qr__caption">
+        Scan to buy tickets or learn more.
+      </p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+

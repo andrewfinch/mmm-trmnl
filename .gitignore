@@ -1,0 +1,19 @@
+# Environments & secrets
+.env
+.env.*
+!.env.example
+.venv/
+
+# Python artifacts
+__pycache__/
+*.pyc
+
+# Generated files
+payload.json
+.cache/
+
+# OS/editor cruft
+.DS_Store
+.idea/
+.vscode/
+
