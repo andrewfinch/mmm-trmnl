@@ -1,41 +1,63 @@
-{% comment %}
-Mini Movie Marquee — Landscape layout for TRMNL OG (800×480, 4‑level e‑ink)
-Poster maximized on the left, metadata + compact QR on the right.
-Supports Polling (data.* or root) and Display API (payload.*).
-{% endcomment %}
-
 {% assign title = data.title %}
 {% assign subtitle = data.subtitle %}
 {% assign theatre = data.theatre %}
 {% assign poster_url = data.poster_url %}
 {% assign ticket_url = data.ticket_url %}
-{% assign show_qr = data.show_qr | default: false %}
+ 
+{% assign subtitle_raw = subtitle | default: "" %}
+{% assign parts = subtitle_raw | split: "•" %}
+{% assign sub_day = parts[0] | default: "" | strip %}
+{% assign sub_date = parts[1] | default: "" | strip %}
+{% assign sub_time = parts[2] | default: "" | strip %}
+{% assign now_base = payload.refreshed_at | default: "now" %}
+{% assign today_str = now_base | date: "%b %-d" %}
+{% assign now_epoch = now_base | date: "%s" | plus: 0 %}
+{% assign tomorrow_epoch = now_epoch | plus: 86400 %}
+{% assign tomorrow_str = tomorrow_epoch | date: "%b %-d" %}
+{% assign time_parts = sub_time | split: ":" %}
+{% assign hour_str = time_parts[0] | default: "" | strip %}
+{% assign hour_num = hour_str | plus: 0 %}
+{% assign sub_time_down = sub_time | downcase %}
+{% if sub_date == today_str and sub_time_down contains "pm" and hour_num >= 5 and hour_num != 12 %}
+  {% assign relative_label = "Tonight" %}
+{% elsif sub_date == today_str %}
+  {% assign relative_label = "Today" %}
+{% elsif sub_date == tomorrow_str %}
+  {% assign relative_label = "Tomorrow" %}
+{% elsif sub_day != "" %}
+  {% assign relative_label = sub_day %}
+{% else %}
+  {% assign relative_label = subtitle_raw | default: "Showtime TBD" %}
+{% endif %}
+{% assign display_subtitle = relative_label %}
+{% if sub_time != "" and relative_label != subtitle_raw and relative_label != "Showtime TBD" %}
+  {% assign display_subtitle = relative_label | append: " • " | append: sub_time %}
+{% endif %}
 
 <style>
-  :root {
-    --bg: #ffffff;
-    --text: #0f0f0f;
-    --muted: #555555;
-    --stroke: #cccccc;
+  html, body {
+    height: 100%;
+    overflow: hidden;
   }
-
   body {
     margin: 0;
     padding: 0;
     font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
-    background: var(--bg);
-    color: var(--text);
+    background: #ffffff;
+    color: #0f0f0f;
   }
 
   .screen {
     box-sizing: border-box;
-    width: 800px;
-    height: 480px;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
     display: flex;
     flex-direction: row;
-    padding: 0;      /* full-bleed: no outer padding */
-    gap: 16px;       /* small internal gutter only */
-    background: var(--bg);
+    align-items: stretch;
+    padding: 0;
+    gap: 0;
+    background: #ffffff;
   }
 
   /* Left: poster column — full available height, preserved aspect (2:3) */
@@ -51,19 +73,15 @@ Supports Polling (data.* or root) and Display API (payload.*).
     justify-content: center;
     overflow: hidden;
   }
+  .meta { height: 100%; }
   .poster img {
     width: 100%;
     height: 100%;
-    object-fit: contain;   /* never crop tall portrait posters */
+    object-fit: cover;   /* ensure full-bleed: fill container with no inner margins */
+    display: block;      /* remove inline-image baseline gaps */
+    max-height: none;
   }
-  .poster--placeholder {
-    font-size: 22px;
-    font-weight: 600;
-    text-transform: uppercase;
-    text-align: center;
-    color: var(--muted);
-    padding: 16px;
-  }
+  .poster--placeholder { font-size: 18px; color: #555555; padding: 8px; text-align: center; }
 
   /* Right: metadata column */
   .meta {
@@ -71,13 +89,13 @@ Supports Polling (data.* or root) and Display API (payload.*).
     display: flex;
     flex-direction: column;
     min-width: 0; /* allow text to wrap nicely */
-    padding: 24px 24px 24px 0; /* add breathing room around text, keep left flush to gap */
+    padding: 16px; /* minimal breathing room */
   }
   .meta__theatre {
     text-transform: uppercase;
     letter-spacing: 0.12em;
     font-size: 15px;
-    color: var(--muted);
+    color: #555555;
     margin: 0 0 8px 0;
   }
   .meta__title {
@@ -85,51 +103,39 @@ Supports Polling (data.* or root) and Display API (payload.*).
     line-height: 1.05;
     margin: 0 0 14px 0;
     word-break: break-word;
-    hyphens: auto;
   }
   .meta__subtitle {
-    font-size: 26px;
+    font-size: 36px;
+    font-weight: 700;
     margin: 0 0 24px 0;
   }
-
-  /* QR block anchored to the bottom of the right column */
+  /* Minimal QR styles */
   .qr {
     margin-top: auto;
-    border-top: none;
-    padding-top: 0;
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 12px;
   }
   .qr__code {
-    width: 120px;     /* compact but reliable on 800×480 e‑ink */
+    width: 120px;
     height: 120px;
-    border: none;
-    background: #fff; /* maintain quiet zone contrast */
+    background: #ffffff;
     display: flex;
     align-items: center;
     justify-content: center;
   }
   .qr__caption {
-    font-size: 18px;
+    font-size: 16px;
     line-height: 1.3;
     max-width: 220px;
-    color: var(--muted);
-  }
-  /* Image-based gray divider to survive e-ink quantization */
-  .divider {
-    width: 100%;
-    height: 2px;
-    display: block;
-    margin: 12px 0 12px 0;
-    object-fit: fill;
+    color: #555555;
   }
 </style>
 
-<div class="screen">
+<div class="screen screen--no-bleed">
   <div class="poster">
     {% if poster_url %}
-      <img class="image" src="{{ poster_url }}" alt="{{ title | escape }} poster" />
+      <img class="image image-dither" src="{{ poster_url }}" alt="{{ title | escape }} poster" />
     {% else %}
       <div class="poster--placeholder">Poster unavailable</div>
     {% endif %}
@@ -138,27 +144,19 @@ Supports Polling (data.* or root) and Display API (payload.*).
   <div class="meta">
     <p class="meta__theatre">{{ theatre | default: "RevivalHub" }}</p>
     <h1 class="meta__title">{{ title | default: "Coming Soon" }}</h1>
-    <p class="meta__subtitle">{{ subtitle | default: "Showtime TBD" }}</p>
-
-    <!-- Gray divider rendered as an image so grayscale is preserved -->
-    <img
-      class="image divider"
-      alt=""
-      src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 2' width='100' height='2'><rect width='100' height='2' fill='%23999999'/></svg>"
-    />
-
-    {% if show_qr and ticket_url %}
+    <p class="meta__subtitle">{{ display_subtitle }}</p>
+    {% if ticket_url %}
       <div class="qr">
         <div class="qr__code">
           <img
             class="image"
-            src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&amp;margin=2&amp;data={{ ticket_url | url_encode }}"
+            src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&amp;margin=2&amp;data={{ ticket_url | url_encode }}&amp;cachebust={{ now_base | date: "%s" }}"
             alt="QR code for tickets"
             width="120"
             height="120"
           />
         </div>
-        <p class="qr__caption">Scan to buy tickets or learn more.</p>
+        <p class="qr__caption">Scan to buy tickets.</p>
       </div>
     {% endif %}
   </div>
