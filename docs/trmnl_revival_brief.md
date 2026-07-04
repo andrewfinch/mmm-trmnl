@@ -10,9 +10,9 @@
 ## 2. RevivalHub Data & Sync Service
 
 - **Ingest + cache** – Reuse the existing `example script.py` heuristics to fetch RevivalHub’s JSON dump, normalize showtimes to device locale, and pre-scale poster URLs (store alongside ticket checkout deep links). Keep the cached snapshot lightweight (<2 KB per device) so it can be pushed directly to TRMNL’s webhook endpoint.[^4]
-- **Payload schema** – Emit a payload with `title`, `subtitle` (formatted time string), `poster_url`, `ticket_url`, `show_qr`, and `refreshed_at`. This mirrors the fields our Liquid template expects and lets TRMNL’s system render the scene without additional fetches.
+- **Payload schema** – Emit a payload with `title`, `poster_url`, `ticket_url`, venue-local display fields, UTC epoch boundaries for the show date, and `refreshed_at`. This mirrors the fields our Liquid template expects and lets TRMNL’s system render the scene without additional fetches.
 - **Transport options**  
-  - *GitHub Action cron* – Schedule a job (e.g., every 15 min) that runs the sync CLI, hydrates the JSON, and POSTs to the Display/Plugin Data API with the device/scene identifier stored as secrets. This satisfies “maintenance free” delivery.  
+  - *GitHub Action cron* – Schedule a job (e.g., every 4 hours) that runs the sync CLI, hydrates the JSON, and publishes the polling payload to GitHub Pages. This satisfies “maintenance free” delivery.
   - *BYOS/BYOD microservice* – For users needing faster refresh or multi-venue coverage, host the same sync logic behind a minimal HTTPS endpoint that TRMNL can poll, aligning with their DIY guidance.[^4]
 - **Observability** – Log payload hashes + HTTP responses so we can diff changes between runs and honor TRMNL’s hourly rate envelope (standard vs. TRMNL+ tiers).
 
@@ -26,7 +26,7 @@
 
 ## 4. Configuration, Deployment & Distribution
 
-- **User settings model** – Define plugin settings for `theatre_id` (dropdown or slug), `lookahead_hours`, and `show_qr` boolean so each installation can tailor its data. TRMNL’s private plugin settings flow surfaces these fields in the dashboard and stores values for the data sync to read.[^7]
+- **User settings model** – Define plugin settings for `theatre_id` (dropdown or slug) and `lookahead_hours` so each installation can tailor its data. TRMNL’s private plugin settings flow surfaces these fields in the dashboard and stores values for the data sync to read.[^7]
 - **Secrets + rollout** – Document how to: (1) upload the plugin bundle, (2) capture API tokens/device IDs, (3) configure GitHub Action secrets, and (4) verify first render using Developer Edition diagnostics.[^5][^7]
 - **Sharing path** – Package the plugin as a Recipe once stable so other TRMNL owners can install with prefilled defaults, while still pointing them to fork the GitHub Action for their own API keys.[^7]
 - **Operational notes** – Recommend refresh intervals aligned with TRMNL’s published limits, highlight battery considerations (e.g., reducing updates overnight), and describe fallbacks if RevivalHub data is stale (poster placeholder + “No show scheduled” copy).
@@ -38,4 +38,3 @@
 [^5]: https://usetrmnl.com/blog/developer-edition?utm_source=openai  
 [^6]: https://github.com/schrockwell/trmnl_preview?utm_source=openai  
 [^7]: https://help.usetrmnl.com/en/articles/9510536-private-plugins?utm_source=openai
-

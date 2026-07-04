@@ -1,164 +1,106 @@
-{% assign title = data.title %}
-{% assign subtitle = data.subtitle %}
-{% assign theatre = data.theatre %}
+{% assign title = data.title | default: "Coming Soon" %}
+{% assign theatre = data.theatre | default: "RevivalHub" %}
 {% assign poster_url = data.poster_url %}
 {% assign ticket_url = data.ticket_url %}
- 
-{% assign subtitle_raw = subtitle | default: "" %}
-{% assign parts = subtitle_raw | split: "•" %}
-{% assign sub_day = parts[0] | default: "" | strip %}
-{% assign sub_date = parts[1] | default: "" | strip %}
-{% assign sub_time = parts[2] | default: "" | strip %}
-{% assign now_base = payload.refreshed_at | default: "now" %}
-{% assign today_str = now_base | date: "%b %-d" %}
-{% assign now_epoch = now_base | date: "%s" | plus: 0 %}
-{% assign tomorrow_epoch = now_epoch | plus: 86400 %}
-{% assign tomorrow_str = tomorrow_epoch | date: "%b %-d" %}
-{% assign time_parts = sub_time | split: ":" %}
-{% assign hour_str = time_parts[0] | default: "" | strip %}
-{% assign hour_num = hour_str | plus: 0 %}
-{% assign sub_time_down = sub_time | downcase %}
-{% if sub_date == today_str and sub_time_down contains "pm" and hour_num >= 5 and hour_num != 12 %}
-  {% assign relative_label = "Tonight" %}
-{% elsif sub_date == today_str %}
-  {% assign relative_label = "Today" %}
-{% elsif sub_date == tomorrow_str %}
-  {% assign relative_label = "Tomorrow" %}
-{% elsif sub_day != "" %}
-  {% assign relative_label = sub_day %}
-{% else %}
-  {% assign relative_label = subtitle_raw | default: "Showtime TBD" %}
-{% endif %}
-{% assign display_subtitle = relative_label %}
-{% if sub_time != "" and relative_label != subtitle_raw and relative_label != "Showtime TBD" %}
-  {% assign display_subtitle = relative_label | append: " • " | append: sub_time %}
-{% endif %}
 
-<style>
-  html, body {
-    height: 100%;
-    overflow: hidden;
-  }
-  body {
-    margin: 0;
-    padding: 0;
-    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
-    background: #ffffff;
-    color: #0f0f0f;
-  }
-
-  .screen {
-    box-sizing: border-box;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    display: flex;
-    flex-direction: row;
-    align-items: stretch;
-    padding: 0;
-    gap: 0;
-    background: #ffffff;
-  }
-
-  /* Left: poster column — full available height, preserved aspect (2:3) */
-  .poster {
-    flex: 0 0 auto;
-    height: 100%;
-    aspect-ratio: 2 / 3;
-    border-radius: 0;       /* full-bleed: no rounded edges */
-    border: none;           /* full-bleed: no border */
-    background: #e8e8e8;    /* placeholder bg behind poster */
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-  }
-  .meta { height: 100%; }
-  .poster img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;   /* ensure full-bleed: fill container with no inner margins */
-    display: block;      /* remove inline-image baseline gaps */
-    max-height: none;
-  }
-  .poster--placeholder { font-size: 18px; color: #555555; padding: 8px; text-align: center; }
-
-  /* Right: metadata column */
-  .meta {
-    flex: 1 1 0;
-    display: flex;
-    flex-direction: column;
-    min-width: 0; /* allow text to wrap nicely */
-    padding: 16px; /* minimal breathing room */
-  }
-  .meta__theatre {
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    font-size: 15px;
-    color: #555555;
-    margin: 0 0 8px 0;
-  }
-  .meta__title {
-    font-size: 44px;
-    line-height: 1.05;
-    margin: 0 0 14px 0;
-    word-break: break-word;
-  }
-  .meta__subtitle {
-    font-size: 36px;
-    font-weight: 700;
-    margin: 0 0 24px 0;
-  }
-  /* Minimal QR styles */
-  .qr {
-    margin-top: auto;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .qr__code {
-    width: 120px;
-    height: 120px;
-    background: #ffffff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .qr__caption {
-    font-size: 16px;
-    line-height: 1.3;
-    max-width: 220px;
-    color: #555555;
-  }
-</style>
-
-<div class="screen screen--no-bleed">
-  <div class="poster">
-    {% if poster_url %}
-      <img class="image image-dither" src="{{ poster_url }}" alt="{{ title | escape }} poster" />
+{% comment %} ---- Showtime label ----
+Preferred path: epoch fields from the feed. Pure integer comparisons against
+TRMNL's render-time clock, so labels are timezone-proof.
+Fallback path: parse the legacy "Sat • Jul 4 • 3:00 PM" subtitle string.
+The fallback can be deleted once the feed emits showtime_epoch. {% endcomment %}
+{% if data.showtime_epoch %}
+  {% assign now_epoch = trmnl.system.timestamp_utc | plus: 0 %}
+  {% assign day_start = data.day_start_epoch | plus: 0 %}
+  {% assign day_end = data.day_end_epoch | plus: 0 %}
+  {% assign prev_day_start = day_start | minus: 86400 %}
+  {% if now_epoch >= day_start and now_epoch < day_end %}
+    {% if data.is_evening %}
+      {% assign relative_label = "Tonight" %}
     {% else %}
-      <div class="poster--placeholder">Poster unavailable</div>
+      {% assign relative_label = "Today" %}
     {% endif %}
-  </div>
+  {% elsif now_epoch >= prev_day_start and now_epoch < day_start %}
+    {% assign relative_label = "Tomorrow" %}
+  {% else %}
+    {% assign relative_label = data.show_day %}
+  {% endif %}
+  {% assign display_subtitle = relative_label | append: " • " | append: data.show_time %}
+{% else %}
+  {% assign subtitle_raw = data.subtitle | default: "" %}
+  {% assign parts = subtitle_raw | split: "•" %}
+  {% assign sub_day = parts[0] | default: "" | strip %}
+  {% assign sub_date = parts[1] | default: "" | strip %}
+  {% assign sub_time = parts[2] | default: "" | strip %}
+  {% assign now_base = data.refreshed_at | default: "now" %}
+  {% assign today_str = now_base | date: "%b %-d" %}
+  {% assign now_epoch = now_base | date: "%s" | plus: 0 %}
+  {% assign tomorrow_epoch = now_epoch | plus: 86400 %}
+  {% assign tomorrow_str = tomorrow_epoch | date: "%b %-d" %}
+  {% assign time_parts = sub_time | split: ":" %}
+  {% assign hour_num = time_parts[0] | default: "" | strip | plus: 0 %}
+  {% assign sub_time_down = sub_time | downcase %}
+  {% if sub_date == today_str and sub_time_down contains "pm" and hour_num >= 5 and hour_num != 12 %}
+    {% assign relative_label = "Tonight" %}
+  {% elsif sub_date == today_str %}
+    {% assign relative_label = "Today" %}
+  {% elsif sub_date == tomorrow_str %}
+    {% assign relative_label = "Tomorrow" %}
+  {% elsif sub_day != "" %}
+    {% assign relative_label = sub_day %}
+  {% else %}
+    {% assign relative_label = subtitle_raw | default: "Showtime TBD" %}
+  {% endif %}
+  {% assign display_subtitle = relative_label %}
+  {% if sub_time != "" and relative_label != subtitle_raw and relative_label != "Showtime TBD" %}
+    {% assign display_subtitle = relative_label | append: " • " | append: sub_time %}
+  {% endif %}
+{% endif %}
+{% capture qr_src %}https://api.qrserver.com/v1/create-qr-code/?size=320x320&amp;margin=2&amp;data={{ ticket_url | url_encode }}{% endcapture %}
 
-  <div class="meta">
-    <p class="meta__theatre">{{ theatre | default: "RevivalHub" }}</p>
-    <h1 class="meta__title">{{ title | default: "Coming Soon" }}</h1>
-    <p class="meta__subtitle">{{ display_subtitle }}</p>
-    {% if ticket_url %}
-      <div class="qr">
-        <div class="qr__code">
-          <img
-            class="image"
-            src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&amp;margin=2&amp;data={{ ticket_url | url_encode }}&amp;cachebust={{ now_base | date: "%s" }}"
-            alt="QR code for tickets"
-            width="120"
-            height="120"
-          />
-        </div>
-        <p class="qr__caption">Scan to buy tickets.</p>
+<div class="layout layout--row portrait:layout--col layout--stretch gap--none">
+
+  <!-- Poster: full height on the left in landscape; centered on top in portrait -->
+  <div class="flex flex--center no-shrink h--full portrait:h--auto portrait:w--full">
+    {% if poster_url %}
+      <img class="image image-dither h--[100cqh] w--auto portrait:w--auto portrait:h--[80cqh]" src="{{ poster_url }}" alt="{{ title | escape }} poster" />
+    {% else %}
+      <div class="flex flex--center bg--gray-70 h--[100cqh] w--[280px] portrait:w--[66cqw] portrait:h--[80cqh]">
+        <span class="label label--gray">Poster unavailable</span>
       </div>
     {% endif %}
   </div>
-</div>
 
+  <!-- Meta column (landscape only) -->
+  <div class="portrait:hidden grow stretch-y">
+    <div class="flex flex--col flex--between h--full p--4 lg:p--6">
+      <div class="flex flex--col gap--small">
+        <span class="label label--small label--gray">{{ theatre | upcase }}</span>
+        <span class="title title--large lg:title--xxlarge" data-clamp="3">{{ title }}</span>
+        <span class="title title--small lg:title--large">{{ display_subtitle }}</span>
+      </div>
+      {% if ticket_url %}
+        <div class="flex flex--row flex--center-y gap">
+          <img class="image w--[120px] h--[120px] lg:w--[176px] lg:h--[176px]" src="{{ qr_src }}" alt="QR code for tickets" />
+          <span class="label label--small lg:label--medium label--gray">Scan to buy tickets.</span>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Bottom strip (portrait only): title + time left, QR + theatre right -->
+  <div class="hidden portrait:block grow w--full">
+    <div class="flex flex--row flex--between flex--center-y w--full h--full px--4 py--3 lg:px--6 gap--large">
+      <div class="flex flex--col gap--small grow">
+        <span class="title title--medium lg:title--xxlarge" data-clamp="2">{{ title }}</span>
+        <span class="label label--medium lg:label--xlarge label--gray">{{ display_subtitle }}</span>
+      </div>
+      {% if ticket_url %}
+        <div class="flex flex--col flex--center-x gap--small no-shrink text--center">
+          <img class="image w--[104px] h--[104px] lg:w--[168px] lg:h--[168px]" src="{{ qr_src }}" alt="QR code for tickets" />
+          <span class="label label--xsmall lg:label--small label--gray" data-clamp="2">{{ theatre }}</span>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>

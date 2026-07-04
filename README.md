@@ -1,10 +1,10 @@
 # RevivalHub ➜ TRMNL Bridge
 
-This repository surfaces the next RevivalHub screening on a TRMNL OG device (800×480 e‑ink) using a Private Plugin in Polling mode. GitHub Actions builds a tiny JSON file every 15 minutes; your plugin fetches it and renders via Liquid.
+This repository surfaces the next RevivalHub screening on a TRMNL OG device (800×480 e‑ink) using a Private Plugin in Polling mode. GitHub Actions builds a tiny JSON file every 4 hours; your plugin fetches it and renders via Liquid.
 
 - `src/revivalhub_trmnl_sync.py` – Fetch RevivalHub’s JSON dump, select the next screening for a chosen venue, and build the plugin payload.
-- `plugin/screen.liquid` – Liquid template tuned for the TRMNL OG (800×480, 4 grayscale). Poster on the left, metadata + compact QR on the right.[^device]
-- `.github/workflows/revivalhub_sync.yml` – Scheduled GitHub Action that runs the sync script every 15 minutes (or on demand) and publishes JSON to GitHub Pages.
+- `plugin/screen.liquid` – Liquid template built on TRMNL framework v3 classes. Landscape: poster left, metadata + compact QR right (TRMNL OG). Portrait: poster on top with a title/time + QR strip below (TRMNL X). Responsive `lg:`/`portrait:` variants handle device size and orientation automatically.[^device]
+- `.github/workflows/revivalhub_sync.yml` – Scheduled GitHub Action that runs the sync script every 4 hours (or on demand) and publishes JSON to GitHub Pages.
 
 [^device]: https://shop.usetrmnl.com/collections/devices/products/trmnl  
 [^docs]: https://docs.usetrmnl.com/go/private-plugins/create-a-screen?utm_source=openai
@@ -33,7 +33,6 @@ This repository surfaces the next RevivalHub screening on a TRMNL OG device (800
      --theatre "aero" \
      --timezone "America/Los_Angeles" \
      --lookahead-hours 96 \
-     --show-qr \
      --payload-path payload.json \
      --dry-run
    ```
@@ -74,7 +73,7 @@ Adjust the cron cadence to stay within TRMNL’s published webhook limits (12/ho
    - `https://<user>.github.io/<repo>/payload.json`
    - `https://<user>.github.io/<repo>/plugin_body.json`  ← use this one in Polling
 3. In the TRMNL dashboard, set Strategy: Polling, Polling Verb: GET, leave Headers/Body empty, and set Polling URL to `plugin_body.json`. Click Force Refresh.
-4. The Liquid (`plugin/screen.liquid`) expects: `data.title`, `data.subtitle`, `data.theatre`, `data.poster_url`, `data.ticket_url`, `data.show_qr`.
+4. The Liquid (`plugin/screen.liquid`) expects: `data.title`, `data.theatre`, `data.poster_url`, `data.ticket_url`, `data.showtime_epoch`, `data.day_start_epoch`, `data.day_end_epoch`, `data.show_day`, `data.show_date`, `data.show_time`, and `data.is_evening`.
 
 [^go]: https://docs.usetrmnl.com/go/
 
@@ -89,5 +88,4 @@ Adjust the cron cadence to stay within TRMNL’s published webhook limits (12/ho
 [^preview]: https://github.com/schrockwell/trmnl_preview?utm_source=openai
 
 ## Extending later
-- Rotate venues, customize QR toggling, or pre‑dither 4‑tone posters server‑side for consistent mid‑tones.
-
+- Rotate venues or pre‑dither 4‑tone posters server‑side for consistent mid‑tones.

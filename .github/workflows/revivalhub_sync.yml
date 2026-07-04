@@ -23,7 +23,6 @@ jobs:
       REVIVALHUB_THEATRE: ${{ vars.REVIVALHUB_THEATRE }}
       REVIVALHUB_TIMEZONE: ${{ vars.REVIVALHUB_TIMEZONE }}
       REVIVALHUB_LOOKAHEAD_HOURS: ${{ vars.REVIVALHUB_LOOKAHEAD_HOURS }}
-      REVIVALHUB_SHOW_QR: ${{ vars.REVIVALHUB_SHOW_QR }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

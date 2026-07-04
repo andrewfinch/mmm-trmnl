@@ -92,12 +92,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="IANA timezone used for formatting showtimes.",
     )
     parser.add_argument(
-        "--show-qr",
-        action="store_true",
-        default=False,
-        help="Set this flag to request a QR block on the TRMNL template.",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print payload to stdout (always writes --payload-path when provided).",
@@ -132,7 +126,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         theatre=args.theatre,
         timezone=args.timezone,
         lookahead_hours=args.lookahead_hours,
-        show_qr=args.show_qr,
         fail_on_missing=args.fail_on_missing,
     )
 
@@ -153,7 +146,6 @@ def fetch_payload(
     theatre: str,
     timezone: str,
     lookahead_hours: int,
-    show_qr: bool,
     fail_on_missing: bool,
 ) -> Mapping[str, Any]:
     logging.info("Fetching RevivalHub data from %s", revivalhub_url)
@@ -181,7 +173,7 @@ def fetch_payload(
         screening.when.isoformat(),
         screening.ticket_url or "no ticket URL",
     )
-    return build_trmnl_payload(screening=screening, show_qr=show_qr)
+    return build_trmnl_payload(screening=screening)
 
 
 def find_next_screening(
@@ -343,14 +335,33 @@ def parse_datetime(raw: Any, timezone: str) -> dt.datetime | None:
     return None
 
 
-def build_trmnl_payload(screening: Screening, show_qr: bool) -> Mapping[str, Any]:
+def build_trmnl_payload(screening: Screening) -> Mapping[str, Any]:
+    local = screening.when_local
+    tzinfo = local.tzinfo
+    # Venue-local calendar-day boundaries, DST-safe (computed on local dates,
+    # not by adding 86400s — a local day can be 23h or 25h across a DST shift).
+    day_start_local = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end_local = dt.datetime.combine(
+        day_start_local.date() + dt.timedelta(days=1), dt.time(0, 0), tzinfo=tzinfo
+    )
     payload = {
         "title": screening.title,
-        "subtitle": screening.format_when_text(),
         "theatre": screening.theatre,
         "poster_url": screening.poster_url,
         "ticket_url": screening.ticket_url,
-        "show_qr": bool(show_qr and screening.ticket_url),
+        # Machine-readable showtime. The Liquid template compares these epochs
+        # against TRMNL's render-time clock (trmnl.system.timestamp_utc), so
+        # Tonight/Today/Tomorrow labels never depend on server timezone math.
+        "showtime_epoch": int(screening.when.timestamp()),
+        "showtime_iso": local.isoformat(),
+        "show_day": local.strftime("%a"),
+        "show_date": f"{local.strftime('%b')} {local.day}",
+        "show_time": _format_time(local),
+        "is_evening": local.hour >= 17,
+        "day_start_epoch": int(day_start_local.timestamp()),
+        "day_end_epoch": int(day_end_local.timestamp()),
+        # Legacy preformatted string, kept so older template revisions render.
+        "subtitle": screening.format_when_text(),
         "refreshed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
     return payload
@@ -366,7 +377,6 @@ def build_placeholder_payload(theatre: str, timezone: str) -> Mapping[str, Any]:
         "theatre": theatre,
         "poster_url": None,
         "ticket_url": None,
-        "show_qr": False,
         "refreshed_at": now.isoformat(),
     }
 

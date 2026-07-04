@@ -13,12 +13,15 @@ This directory contains the Liquid template (`screen.liquid`) that the TRMNL pri
 2. Paste the contents of `screen.liquid` into the plugin's screen editor (or upload as shared markup if you plan to reuse it across scenes).
 3. Make sure your plugin's data payload provides the following keys:
    - `title` – Movie title
-   - `subtitle` – Preformatted showtime (e.g., `Fri • Jan 17 • 7:30 PM`)
    - `theatre` – Venue label
-   - `poster_url` – Remote JPG/PNG path
-   - `ticket_url` – Checkout URL (optional)
-   - `show_qr` – Boolean flag that enables the QR block when `ticket_url` exists
+   - `poster_url` – Remote JPG/PNG path (dithered by the framework; 16 gray levels on 4-bit panels)
+   - `ticket_url` – Checkout URL (optional; the QR block renders whenever this is present)
+   - `showtime_epoch` – UTC epoch of the screening
+   - `day_start_epoch` / `day_end_epoch` – UTC epochs of venue-local midnight bounding the show date; the template compares these against TRMNL's render-time clock to label the show Tonight/Today/Tomorrow without any timezone math in Liquid
+   - `show_day` / `show_date` / `show_time` – Venue-local display parts (`Sat`, `Jul 4`, `3:00 PM`)
+   - `is_evening` – `true` for showtimes at or after 5:00 PM local (drives the "Tonight" label)
+   - `subtitle` – Legacy preformatted showtime (`Fri • Jan 17 • 7:30 PM`); only used as a fallback when `showtime_epoch` is absent
 4. Preview using TRMNL’s local tooling (`trmnlp`) or directly on a device before going live.
 
-You can further customize typography, spacing, or QR behavior by editing the CSS near the top of the template. Keep the grayscale palette and generous quiet zones so the design remains legible on the OG 7.5" e‑ink display.
+The template uses only TRMNL framework (v3+) classes — no custom CSS. It adapts automatically: landscape renders poster-left / meta-right, portrait renders poster-on-top with a title/time + QR strip below (`portrait:` variants), and `lg:` variants scale typography and the QR for larger panels like the TRMNL X.
 
