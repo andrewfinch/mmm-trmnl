@@ -31,6 +31,18 @@ POSTER_IMG_BASE = (
     "https://storage.googleapis.com/"
     "revival-hub-ab2a8.firebasestorage.app/screening-posters/resized"
 )
+POSTER_DIRECT_KEYS = ["poster", "poster_url", "image", "artwork", "image_url"]
+POSTER_SLUG_KEYS = [
+    "poster-image-path",
+    "poster_image_path",
+    "posterImagePath",
+    "posterPath",
+    "poster_path",
+    "posterSlug",
+    "poster_slug",
+]
+FILM_TITLE_KEYS = ["title", "film", "movie", "name", "filmTitle"]
+TMDB_ID_KEYS = ["tmdb_id", "tmdbId", "tmdbID"]
 
 
 @dataclasses.dataclass
@@ -184,6 +196,7 @@ def find_next_screening(
 ) -> Screening | None:
     theatre_lower = theatre.lower()
     venue_index = _build_venue_index(source)  # id -> human-readable name
+    film_index = _build_film_index(source)
     theatre_is_id = theatre in venue_index
     now = dt.datetime.now(dt.timezone.utc)
     cutoff = now + dt.timedelta(hours=lookahead_hours)
@@ -230,20 +243,7 @@ def find_next_screening(
         if when < now or when > cutoff:
             continue
 
-        # Poster URL: try direct URL fields first, then build from RevivalHub slug
-        poster_url = _coalesce(entry, ["poster", "poster_url", "image", "artwork"])
-        if not poster_url:
-            slug = _coalesce(
-                entry,
-                [
-                    "poster-image-path",  # primary key in RevivalHub dump
-                    "poster_image_path",
-                    "posterImagePath",
-                    "posterSlug",
-                    "poster_slug",
-                ],
-            )
-            poster_url = _poster_url_from_slug(slug)
+        poster_url = _poster_url_for_entry(entry, film_index)
 
         # Ticket URL: prefer single url fields, else first from ticket_urls[]
         ticket_url = _coalesce(entry, ["ticket_url", "tickets", "link", "url"])
@@ -253,7 +253,7 @@ def find_next_screening(
                 ticket_url = urls[0]
 
         # Title: prefer explicit titles, then filmTitle, then first film name
-        title = _coalesce(entry, ["title", "film", "movie", "name", "filmTitle"])
+        title = _coalesce(entry, FILM_TITLE_KEYS)
         if not title:
             films = entry.get("films") if isinstance(entry, Mapping) else None
             if isinstance(films, list) and films:
@@ -388,6 +388,94 @@ def _coalesce(entry: Mapping[str, Any], keys: Iterable[str]) -> Any | None:
     return None
 
 
+def _poster_url_for_entry(
+    entry: Mapping[str, Any], film_index: Mapping[str, Mapping[str, Any]]
+) -> str | None:
+    """Return the best poster URL for a screening entry."""
+    poster_url = _poster_url_from_record(entry)
+    if poster_url:
+        return poster_url
+
+    films = entry.get("films")
+    if not isinstance(films, list):
+        return None
+
+    for film in films:
+        if not isinstance(film, Mapping):
+            continue
+        poster_url = _poster_url_from_record(film)
+        if poster_url:
+            return poster_url
+        for key in _film_index_keys(film):
+            indexed = film_index.get(key)
+            if indexed:
+                poster_url = _poster_url_from_record(indexed)
+                if poster_url:
+                    return poster_url
+    return None
+
+
+def _poster_url_from_record(record: Mapping[str, Any]) -> str | None:
+    direct = _coalesce(record, POSTER_DIRECT_KEYS)
+    poster_url = _poster_url_from_value(direct)
+    if poster_url:
+        return poster_url
+
+    slug = _coalesce(record, POSTER_SLUG_KEYS)
+    return _poster_url_from_value(slug)
+
+
+def _poster_url_from_value(value: Any) -> str | None:
+    if not value:
+        return None
+    value_str = str(value).strip()
+    if value_str.startswith(("http://", "https://")):
+        return value_str
+    return _poster_url_from_slug(value_str)
+
+
+def _build_film_index(source: Any) -> dict[str, Mapping[str, Any]]:
+    """Index film catalog records by TMDB id and title."""
+    index: dict[str, Mapping[str, Any]] = {}
+
+    def has_poster(record: Mapping[str, Any]) -> bool:
+        return bool(_coalesce(record, POSTER_DIRECT_KEYS) or _coalesce(record, POSTER_SLUG_KEYS))
+
+    def add(record: Mapping[str, Any]) -> None:
+        for key in _film_index_keys(record):
+            existing = index.get(key)
+            if existing is None or (has_poster(record) and not has_poster(existing)):
+                index[key] = record
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, Mapping):
+            films = obj.get("films")
+            if isinstance(films, list):
+                for film in films:
+                    if isinstance(film, Mapping):
+                        add(film)
+            for val in obj.values():
+                walk(val)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+
+    walk(source)
+    return index
+
+
+def _film_index_keys(film: Mapping[str, Any]) -> Iterable[str]:
+    tmdb_id = _coalesce(film, TMDB_ID_KEYS)
+    if tmdb_id:
+        yield f"tmdb:{tmdb_id}"
+
+    title = _coalesce(film, FILM_TITLE_KEYS)
+    if title:
+        normalized = " ".join(str(title).lower().split())
+        if normalized:
+            yield f"title:{normalized}"
+
+
 def _tzinfo(timezone: str) -> dt.tzinfo:
     if ZoneInfo:
         try:
@@ -443,4 +531,3 @@ def _poster_url_from_slug(slug: Any) -> str | None:
 
 if __name__ == "__main__":
     sys.exit(main())
-
