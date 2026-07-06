@@ -64,10 +64,16 @@ readability. See the TRMNL markup editor for the byte-exact deployed version. {%
     {% if when_time != "" %}
       <span class="title title--xxlarge text--gray-20 marquee">{{ when_time }}</span>
     {% endif %}
+    {% if ticket_url %}
+      <img class="image no-shrink hidden portrait:block w--[88px] h--[88px]" src="{{ qr_src }}" alt="Scan for tickets" />
+    {% endif %}
   </div>
 
+  {% comment %} Landscape: large QR floats in the empty margin beside the
+  centered poster. Portrait: hidden here; the strip QR above renders instead
+  so nothing overlaps the poster. {% endcomment %}
   {% if ticket_url %}
-    <div style="position: absolute; top: 160px; right: 14px; background: white; padding: 6px; text-align: center;">
+    <div class="portrait:hidden" style="position: absolute; top: 160px; right: 14px; background: white; padding: 6px; text-align: center;">
       <img class="image" style="display: block; width: 104px; height: 104px;" src="{{ qr_src }}" alt="Scan for tickets" />
       <span class="label label--xsmall marquee" style="display: block; margin-top: 4px;">Tickets</span>
     </div>
