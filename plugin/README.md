@@ -1,11 +1,10 @@
 # TRMNL Revival Plugin Template
 
-This directory contains the Liquid template (`screen.liquid`) that the TRMNL private plugin uses to render a single-screen layout featuring:
+This directory contains the Liquid template (`screen.liquid`) that the TRMNL private plugin uses to render a single-screen "mini marquee" layout featuring:
 
-- Poster artwork (or a neutral placeholder)
-- Theatre name + film title
-- Formatted showtime string
-- Optional QR code pointing to the ticket checkout URL
+- Poster artwork centered up top (or a black marquee-style title card when no poster is available)
+- A showtime strip below it ("Tonight • 7:00 PM", "Tomorrow • 7:30 PM", or "Wednesday • Jul 8 • 7:00 PM" for shows further out)
+- A QR code pinned to the right edge pointing to the ticket checkout URL (rendered only when `ticket_url` is present)
 
 ## Usage
 
@@ -23,5 +22,5 @@ This directory contains the Liquid template (`screen.liquid`) that the TRMNL pri
    - `subtitle` – Legacy preformatted showtime (`Fri • Jan 17 • 7:30 PM`); only used as a fallback when `showtime_epoch` is absent
 4. Preview using TRMNL’s local tooling (`trmnlp`) or directly on a device before going live.
 
-The template uses only TRMNL framework (v3+) classes — no custom CSS. It adapts automatically: landscape renders poster-left / meta-right, portrait renders poster-on-top with a title/time + QR strip below (`portrait:` variants), and `lg:` variants scale typography and the QR for larger panels like the TRMNL X.
+The template targets the TRMNL framework (v3+, currently pinned to 3.1.1) on an 800×480 landscape OG panel with bleed margin removed. The deployed version in the TRMNL markup editor additionally embeds a custom "Marquee" display font as a woff2 data URI; this reference copy omits the font blob but is otherwise kept in sync with the deployed `markup_full`.
 

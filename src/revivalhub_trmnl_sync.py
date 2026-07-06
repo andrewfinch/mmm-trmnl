@@ -13,9 +13,11 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
+from urllib.parse import urlparse
 
 import requests
 
@@ -31,6 +33,17 @@ POSTER_IMG_BASE = (
     "https://storage.googleapis.com/"
     "revival-hub-ab2a8.firebasestorage.app/screening-posters/resized"
 )
+# RevivalHub poster paths are TMDB poster hashes, so posters missing from the
+# RevivalHub bucket (it only mirrors a subset) can be served from TMDB's CDN.
+TMDB_IMG_BASE = "https://image.tmdb.org/t/p/w500"
+
+# Ticket-URL slug tokens that describe the presentation, not the film title.
+SLUG_NOISE_TOKENS = {
+    "in", "on", "at", "and", "with",
+    "70mm", "35mm", "16mm", "8mm", "4k", "imax", "3d", "dcp", "digital",
+    "restoration", "restored", "print", "presents", "presented", "premiere",
+    "screening", "matinee", "double", "feature", "anniversary", "edition",
+}
 POSTER_DIRECT_KEYS = ["poster", "poster_url", "image", "artwork", "image_url"]
 POSTER_SLUG_KEYS = [
     "poster-image-path",
@@ -118,6 +131,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Optional path to write the computed payload as JSON.",
     )
     parser.add_argument(
+        "--skip-poster-check",
+        action="store_true",
+        help="Skip HTTP verification (and TMDB fallback) of the poster URL.",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable debug logging.",
@@ -139,6 +157,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         timezone=args.timezone,
         lookahead_hours=args.lookahead_hours,
         fail_on_missing=args.fail_on_missing,
+        verify_poster=not args.skip_poster_check,
     )
 
     if args.payload_path:
@@ -159,6 +178,7 @@ def fetch_payload(
     timezone: str,
     lookahead_hours: int,
     fail_on_missing: bool,
+    verify_poster: bool = True,
 ) -> Mapping[str, Any]:
     logging.info("Fetching RevivalHub data from %s", revivalhub_url)
     response = requests.get(revivalhub_url, timeout=30)
@@ -179,6 +199,9 @@ def fetch_payload(
         logging.warning("%s; generating placeholder payload.", message)
         return build_placeholder_payload(theatre=theatre, timezone=timezone)
 
+    if verify_poster:
+        screening.poster_url = _verify_poster_url(screening.poster_url)
+
     logging.info(
         "Next screening: %s at %s (%s)",
         screening.title,
@@ -196,7 +219,8 @@ def find_next_screening(
 ) -> Screening | None:
     theatre_lower = theatre.lower()
     venue_index = _build_venue_index(source)  # id -> human-readable name
-    film_index = _build_film_index(source)
+    film_catalog = _collect_films(source)
+    film_index = _build_film_index(film_catalog)
     theatre_is_id = theatre in venue_index
     now = dt.datetime.now(dt.timezone.utc)
     cutoff = now + dt.timedelta(hours=lookahead_hours)
@@ -274,7 +298,9 @@ def find_next_screening(
         candidates.append(screening)
 
     candidates.sort(key=lambda s: s.when)
-    return candidates[0] if candidates else None
+    if not candidates:
+        return None
+    return _correct_film_from_ticket_slug(candidates[0], film_catalog)
 
 
 def iter_screenings(source: Any) -> Iterable[MutableMapping[str, Any]]:
@@ -434,26 +460,15 @@ def _poster_url_from_value(value: Any) -> str | None:
     return _poster_url_from_slug(value_str)
 
 
-def _build_film_index(source: Any) -> dict[str, Mapping[str, Any]]:
-    """Index film catalog records by TMDB id and title."""
-    index: dict[str, Mapping[str, Any]] = {}
-
-    def has_poster(record: Mapping[str, Any]) -> bool:
-        return bool(_coalesce(record, POSTER_DIRECT_KEYS) or _coalesce(record, POSTER_SLUG_KEYS))
-
-    def add(record: Mapping[str, Any]) -> None:
-        for key in _film_index_keys(record):
-            existing = index.get(key)
-            if existing is None or (has_poster(record) and not has_poster(existing)):
-                index[key] = record
+def _collect_films(source: Any) -> list[Mapping[str, Any]]:
+    """Collect every film record reachable under a 'films' list."""
+    found: list[Mapping[str, Any]] = []
 
     def walk(obj: Any) -> None:
         if isinstance(obj, Mapping):
             films = obj.get("films")
             if isinstance(films, list):
-                for film in films:
-                    if isinstance(film, Mapping):
-                        add(film)
+                found.extend(f for f in films if isinstance(f, Mapping))
             for val in obj.values():
                 walk(val)
         elif isinstance(obj, list):
@@ -461,7 +476,181 @@ def _build_film_index(source: Any) -> dict[str, Mapping[str, Any]]:
                 walk(item)
 
     walk(source)
+    return found
+
+
+def _build_film_index(films: Sequence[Mapping[str, Any]]) -> dict[str, Mapping[str, Any]]:
+    """Index film records by TMDB id and title."""
+    index: dict[str, Mapping[str, Any]] = {}
+
+    def has_poster(record: Mapping[str, Any]) -> bool:
+        return bool(_coalesce(record, POSTER_DIRECT_KEYS) or _coalesce(record, POSTER_SLUG_KEYS))
+
+    for record in films:
+        for key in _film_index_keys(record):
+            existing = index.get(key)
+            if existing is None or (has_poster(record) and not has_poster(existing)):
+                index[key] = record
+
     return index
+
+
+def _normalize_tokens(text: Any) -> list[str]:
+    return [t for t in re.split(r"[^a-z0-9]+", str(text).lower()) if t]
+
+
+def _ticket_slug_tokens(ticket_url: Any) -> list[str]:
+    """Tokens of the last path segment of a ticket URL, e.g.
+    '.../now-showing/babylon-in-70mm-07-08-2026/' -> ['babylon','in','70mm',...]."""
+    if not ticket_url:
+        return []
+    try:
+        path = urlparse(str(ticket_url)).path
+    except ValueError:
+        return []
+    segments = [s for s in path.split("/") if s]
+    if not segments:
+        return []
+    return _normalize_tokens(segments[-1])
+
+
+def _contains_sublist(haystack: Sequence[str], needle: Sequence[str]) -> bool:
+    needle = list(needle)
+    n = len(needle)
+    if n == 0:
+        return False
+    return any(list(haystack[i : i + n]) == needle for i in range(len(haystack) - n + 1))
+
+
+def _entry_film_hints(entry: Any) -> Mapping[str, Any]:
+    """Directors/year from the screening's own film record; used to pick among
+    same-titled catalog films when the film link is corrected."""
+    if not isinstance(entry, Mapping):
+        return {}
+    films = entry.get("films")
+    if isinstance(films, list):
+        for film in films:
+            if isinstance(film, Mapping):
+                return {"directors": film.get("directors"), "year": film.get("year")}
+    return {}
+
+
+def _release_year(film: Mapping[str, Any]) -> int | None:
+    raw = film.get("releaseDate") or film.get("year")
+    if not raw:
+        return None
+    match = re.search(r"\d{4}", str(raw))
+    return int(match.group()) if match else None
+
+
+def _correct_film_from_ticket_slug(
+    screening: Screening, films: Sequence[Mapping[str, Any]]
+) -> Screening:
+    """Fix screenings whose film link contradicts their ticket URL.
+
+    RevivalHub occasionally links a screening to the wrong same-titled film
+    (e.g. an Aero 'Babylon in 70mm' show linked to a 2022 Korean film named
+    'Boogie Nights'). The ticket URL slug names what is actually playing, so
+    when the linked title is absent from the slug, re-resolve the film from
+    the catalog by slug match, using the entry's directors/year as tie-breaks.
+    """
+    slug_tokens = _ticket_slug_tokens(screening.ticket_url)
+    if not slug_tokens:
+        return screening
+    title_tokens = _normalize_tokens(screening.title)
+    if title_tokens and _contains_sublist(slug_tokens, title_tokens):
+        return screening
+
+    content_tokens = [
+        t for t in slug_tokens if t not in SLUG_NOISE_TOKENS and not t.isdigit()
+    ]
+    if not content_tokens:
+        return screening
+
+    hints = _entry_film_hints(screening.raw)
+    hint_directors = _normalize_tokens(hints.get("directors") or "")
+    hint_year = hints.get("year")
+
+    best: Mapping[str, Any] | None = None
+    best_score: tuple[int, ...] | None = None
+    for film in films:
+        cand_title = _coalesce(film, FILM_TITLE_KEYS)
+        cand_tokens = _normalize_tokens(cand_title) if cand_title else []
+        if not cand_tokens or not _contains_sublist(slug_tokens, cand_tokens):
+            continue
+        if len(cand_tokens) * 2 <= len(content_tokens):
+            # Must cover the majority of the slug's content tokens, else a
+            # series page slug like 'filmforum-50-program-16' would hand the
+            # screening to any film that shares a word with it (e.g. 'Program').
+            continue
+        cand_directors = _normalize_tokens(film.get("directors") or "")
+        release_year = _release_year(film)
+        score = (
+            len(cand_tokens),
+            1 if hint_directors and cand_directors == hint_directors else 0,
+            1 if hint_year and release_year and abs(int(hint_year) - release_year) <= 1 else 0,
+            1 if _poster_url_from_record(film) else 0,
+            release_year or 0,
+        )
+        if best_score is None or score > best_score:
+            best, best_score = film, score
+
+    if best is None:
+        logging.warning(
+            "Ticket slug %s does not mention linked film '%s'; no catalog match, keeping feed data.",
+            "-".join(slug_tokens),
+            screening.title,
+        )
+        return screening
+
+    new_title = str(_coalesce(best, FILM_TITLE_KEYS))
+    logging.warning(
+        "Feed links film '%s' but ticket slug says '%s'; using catalog film instead.",
+        screening.title,
+        new_title,
+    )
+    return dataclasses.replace(
+        screening, title=new_title, poster_url=_poster_url_from_record(best)
+    )
+
+
+def _tmdb_fallback_url(poster_url: str) -> str | None:
+    """TMDB CDN equivalent of a RevivalHub resized-bucket poster URL."""
+    match = re.match(
+        re.escape(POSTER_IMG_BASE) + r"/(?P<root>[^/]+?)(?:_\d+x\d+)?\.jpg$",
+        poster_url,
+    )
+    if not match:
+        return None
+    return f"{TMDB_IMG_BASE}/{match.group('root')}.jpg"
+
+
+def _verify_poster_url(poster_url: str | None) -> str | None:
+    """Return the first poster candidate that actually serves an image.
+
+    RevivalHub's bucket only mirrors a subset of posters; a missing object
+    returns 403 and TRMNL then renders alt text instead of artwork. Fall back
+    to the TMDB CDN (poster paths are TMDB hashes) before omitting the poster.
+    """
+    if not poster_url:
+        return None
+    candidates = [poster_url]
+    fallback = _tmdb_fallback_url(poster_url)
+    if fallback:
+        candidates.append(fallback)
+    for candidate in candidates:
+        try:
+            response = requests.head(candidate, timeout=15, allow_redirects=True)
+        except requests.RequestException as exc:
+            logging.warning("Poster check failed for %s: %s", candidate, exc)
+            continue
+        if response.status_code == 200:
+            if candidate != poster_url:
+                logging.info("Poster missing from RevivalHub bucket; using %s", candidate)
+            return candidate
+        logging.warning("Poster URL %s returned HTTP %s", candidate, response.status_code)
+    logging.warning("No working poster URL found; omitting poster.")
+    return None
 
 
 def _film_index_keys(film: Mapping[str, Any]) -> Iterable[str]:
