@@ -15,15 +15,18 @@
 
 {% comment %} ---- Showtime label ----
 Preferred path: epoch fields from the feed. Pure integer comparisons against
-TRMNL's render-time clock, so labels are timezone-proof. Shows beyond
-today/tomorrow also surface the calendar date, since a bare weekday is
-ambiguous with a multi-week lookahead.
+TRMNL's render-time clock, so labels are timezone-proof. Exactly one of these
+renders, always paired with the time and nothing else:
+  - "Tonight" / "Today" / "Tomorrow"
+  - weekday name when the show is within a week
+  - calendar date ("Jul 8") when it's further out
 Fallback path: the legacy preformatted subtitle string. {% endcomment %}
 {% if data.showtime_epoch %}
   {% assign now_epoch = trmnl.system.timestamp_utc | plus: 0 %}
   {% assign day_start = data.day_start_epoch | plus: 0 %}
   {% assign day_end = data.day_end_epoch | plus: 0 %}
   {% assign prev_day_start = day_start | minus: 86400 %}
+  {% assign week_ahead = day_start | minus: 604800 %}
   {% assign when_time = data.show_time %}
   {% if now_epoch >= day_start and now_epoch < day_end %}
     {% if data.is_evening %}
@@ -33,9 +36,10 @@ Fallback path: the legacy preformatted subtitle string. {% endcomment %}
     {% endif %}
   {% elsif now_epoch >= prev_day_start and now_epoch < day_start %}
     {% assign when_label = "Tomorrow" %}
-  {% else %}
+  {% elsif now_epoch >= week_ahead %}
     {% assign when_label = day_full %}
-    {% assign when_time = data.show_date | append: " • " | append: data.show_time %}
+  {% else %}
+    {% assign when_label = data.show_date %}
   {% endif %}
 {% else %}
   {% assign when_label = data.subtitle | default: "Showtime TBD" %}
@@ -43,13 +47,13 @@ Fallback path: the legacy preformatted subtitle string. {% endcomment %}
 {% endif %}
 
 {% assign qr_data = ticket_url | url_encode %}
-{% assign qr_src = "https://api.qrserver.com/v1/create-qr-code/?size=208x208&amp;margin=2&amp;data=" | append: qr_data %}
+{% assign qr_src = "https://api.qrserver.com/v1/create-qr-code/?size=100x100&amp;margin=2&amp;data=" | append: qr_data %}
 
 {% comment %} The deployed plugin also embeds a custom "Marquee" @font-face
 (woff2 data URI) and a .marquee class; kept out of this reference copy for
 readability. See the TRMNL markup editor for the byte-exact deployed version. {% endcomment %}
 
-<div class="layout layout--col layout--center-x gap--none" style="position: relative;">
+<div class="layout layout--col layout--center-x gap--none">
 
   {% if poster_url %}
     <img class="image image-dither no-shrink mx--auto h--[91cqh] w--auto" src="{{ poster_url }}" alt="{{ title | escape }}" />
@@ -65,18 +69,8 @@ readability. See the TRMNL markup editor for the byte-exact deployed version. {%
       <span class="title title--xxlarge text--gray-20 marquee">{{ when_time }}</span>
     {% endif %}
     {% if ticket_url %}
-      <img class="image no-shrink hidden portrait:block w--[88px] h--[88px]" src="{{ qr_src }}" alt="Scan for tickets" />
+      <img class="image no-shrink w--[50px] h--[50px]" src="{{ qr_src }}" alt="QR code for tickets" />
     {% endif %}
   </div>
-
-  {% comment %} Landscape: large QR floats in the empty margin beside the
-  centered poster. Portrait: hidden here; the strip QR above renders instead
-  so nothing overlaps the poster. {% endcomment %}
-  {% if ticket_url %}
-    <div class="portrait:hidden" style="position: absolute; top: 160px; right: 14px; background: white; padding: 6px; text-align: center;">
-      <img class="image" style="display: block; width: 104px; height: 104px;" src="{{ qr_src }}" alt="Scan for tickets" />
-      <span class="label label--xsmall marquee" style="display: block; margin-top: 4px;">Tickets</span>
-    </div>
-  {% endif %}
 
 </div>

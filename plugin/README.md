@@ -3,8 +3,8 @@
 This directory contains the Liquid template (`screen.liquid`) that the TRMNL private plugin uses to render a single-screen "mini marquee" layout featuring:
 
 - Poster artwork centered up top (or a black marquee-style title card when no poster is available)
-- A showtime strip below it ("Tonight • 7:00 PM", "Tomorrow • 7:30 PM", or "Wednesday • Jul 8 • 7:00 PM" for shows further out)
-- A QR code pinned to the right edge pointing to the ticket checkout URL (rendered only when `ticket_url` is present)
+- A showtime strip below it: one label plus the time — "Tonight 7:00 PM", "Tomorrow 7:30 PM", the weekday ("Wednesday 7:00 PM") for shows within a week, or the date ("Jul 8 7:00 PM") for shows further out
+- A small QR code inline in that strip pointing to the ticket checkout URL (rendered only when `ticket_url` is present)
 
 ## Usage
 
