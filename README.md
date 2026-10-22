@@ -12,7 +12,7 @@ This repository surfaces the next RevivalHub screening on a TRMNL OG device (800
 ## Requirements
 
 - Python 3.11+
-- `requests` (installed via `pip install -r requirements.txt`)
+- `requests` and `certifi>=2026.10.19` (installed from `requirements.txt`)
 - RevivalHub JSON endpoint (public or authenticated)
 - TRMNL Private Plugin configured to fetch data via Polling[^dev]
 
@@ -24,7 +24,8 @@ This repository surfaces the next RevivalHub screening on a TRMNL OG device (800
    ```bash
    python -m venv .venv
    source .venv/bin/activate
-   pip install -r requirements.txt
+   python -m pip install --upgrade "pip>=26.2.2"
+   python -m pip install --upgrade -r requirements.txt
    ```
 2. Run the sync script to inspect the output:
    ```bash
@@ -40,14 +41,36 @@ This repository surfaces the next RevivalHub screening on a TRMNL OG device (800
 
 The script exits with code 2 if `--fail-on-missing` is set and no matching show is found within the lookahead window.
 
+### Certificate security
+
+The [October 2026 eMudhra CA compromise](https://blog.cloudflare.com/emudhra-certificate-compromise)
+affects HTTPS clients that still trust the affected certificate chains. Requests
+uses a separate CA bundle supplied by `certifi`; updating a browser alone does
+not update that bundle. This project requires `certifi>=2026.10.19`, and the
+installation commands above also update pip's own bundled certificate data.
+
+For an existing virtual environment, activate it and rerun both installation
+commands above, then check it with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The offline certificate test verifies that Requests' default CA bundle excludes
+the affected roots, including the Sectigo cross-signing path. Custom bundles
+selected with `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE` require their own updates;
+the default-bundle test does not validate those overrides. Keep TLS verification
+enabled when resolving certificate errors.
+
 ## GitHub Action Automation
 
 The workflow in `.github/workflows/revivalhub_sync.yml`:
 
 - Runs on a `0 */4 * * *` cron (every 4 hours) plus manual `workflow_dispatch`.
-- Sets up Python, installs dependencies, and executes the sync CLI.
+- Sets up Python, updates pip and dependencies, runs the tests, and executes the sync CLI.
 - Uploads the JSON payload as a build artifact for troubleshooting.
 - Publishes `payload.json` and `plugin_body.json` to GitHub Pages. Point your Private Plugin (Polling) to `plugin_body.json` (it wraps the payload under `{"data": …}` which Liquid reads as `data.*`).[^go]
+- Publishes only after tests and payload generation succeed. A failed certificate check or fetch leaves the previously published site in place.
 
 Configure the following repository **secrets**:
 

@@ -1,2 +1,4 @@
 requests>=2.31.0,<3.0.0
+# Distrust the roots involved in the October 2026 eMudhra CA compromise.
+certifi>=2026.10.19
 

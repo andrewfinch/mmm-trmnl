@@ -34,7 +34,12 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade "pip>=26.2.2"
+          python -m pip install --upgrade -r requirements.txt
+
+      - name: Test payload logic and certificate trust
+        run: python -m unittest discover -s tests -v
 
       - name: Build payload (dry run)
         env:
@@ -60,7 +65,6 @@ jobs:
           path: payload.json
 
       - name: Prepare Pages artifact
-        if: always()
         run: |
           set -euo pipefail
           mkdir -p site
@@ -68,13 +72,11 @@ jobs:
           python -c "import json, pathlib; p=json.load(open('payload.json')); pathlib.Path('site/plugin_body.json').write_text(json.dumps({'data': p, 'debug': True}, indent=2))"
 
       - name: Upload Pages artifact
-        if: always()
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
       - name: Deploy to GitHub Pages
-        if: always()
         id: deployment
         uses: actions/deploy-pages@v4
 
