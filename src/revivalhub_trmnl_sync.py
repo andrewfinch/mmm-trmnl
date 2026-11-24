@@ -149,16 +149,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(message)s",
     )
-    logging.debug("Arguments: %s", args)
-
-    payload = fetch_payload(
-        revivalhub_url=args.revivalhub_url,
-        theatre=args.theatre,
-        timezone=args.timezone,
-        lookahead_hours=args.lookahead_hours,
-        fail_on_missing=args.fail_on_missing,
-        verify_poster=not args.skip_poster_check,
-    )
+    # HTTP debug logs and exception messages can contain authenticated URLs.
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    try:
+        payload = fetch_payload(
+            revivalhub_url=args.revivalhub_url,
+            theatre=args.theatre,
+            timezone=args.timezone,
+            lookahead_hours=args.lookahead_hours,
+            fail_on_missing=args.fail_on_missing,
+            verify_poster=not args.skip_poster_check,
+        )
+    except (requests.RequestException, ValueError) as exc:
+        logging.error(
+            "Unable to build payload (%s). Check the HTTPS endpoint, response, and configuration.",
+            type(exc).__name__,
+        )
+        return 1
 
     if args.payload_path:
         Path(args.payload_path).write_text(json.dumps(payload, indent=2))
@@ -180,9 +187,13 @@ def fetch_payload(
     fail_on_missing: bool,
     verify_poster: bool = True,
 ) -> Mapping[str, Any]:
-    logging.info("Fetching RevivalHub data from %s", revivalhub_url)
-    response = requests.get(revivalhub_url, timeout=30)
+    if not _is_https_url(revivalhub_url):
+        raise ValueError("RevivalHub requires an HTTPS URL without embedded credentials.")
+    logging.info("Fetching RevivalHub data")
+    response = requests.get(revivalhub_url, timeout=30, allow_redirects=False)
     response.raise_for_status()
+    if 300 <= response.status_code < 400:
+        raise ValueError("Configure the final HTTPS feed URL; redirects are not followed.")
     source = response.json()
 
     screening = find_next_screening(
@@ -203,10 +214,9 @@ def fetch_payload(
         screening.poster_url = _verify_poster_url(screening.poster_url)
 
     logging.info(
-        "Next screening: %s at %s (%s)",
+        "Next screening: %s at %s",
         screening.title,
         screening.when.isoformat(),
-        screening.ticket_url or "no ticket URL",
     )
     return build_trmnl_payload(screening=screening)
 
@@ -262,7 +272,7 @@ def find_next_screening(
                 showtime_raw = screening_times[0]
         when = parse_datetime(showtime_raw, timezone)
         if not when:
-            logging.debug("Skipping entry with unparseable time: %s", entry)
+            logging.debug("Skipping entry with unparseable time")
             continue
         if when < now or when > cutoff:
             continue
@@ -373,8 +383,8 @@ def build_trmnl_payload(screening: Screening) -> Mapping[str, Any]:
     payload = {
         "title": screening.title,
         "theatre": screening.theatre,
-        "poster_url": screening.poster_url,
-        "ticket_url": screening.ticket_url,
+        "poster_url": screening.poster_url if _is_allowed_poster_url(screening.poster_url) else None,
+        "ticket_url": screening.ticket_url if _is_https_url(screening.ticket_url) else None,
         # Machine-readable showtime. The Liquid template compares these epochs
         # against TRMNL's render-time clock (trmnl.system.timestamp_utc), so
         # Tonight/Today/Tomorrow labels never depend on server timezone math.
@@ -456,8 +466,37 @@ def _poster_url_from_value(value: Any) -> str | None:
         return None
     value_str = str(value).strip()
     if value_str.startswith(("http://", "https://")):
-        return value_str
-    return _poster_url_from_slug(value_str)
+        return value_str if _is_allowed_poster_url(value_str) else None
+    poster_url = _poster_url_from_slug(value_str)
+    return poster_url if _is_allowed_poster_url(poster_url) else None
+
+
+def _is_https_url(value: Any) -> bool:
+    """Accept HTTPS links without credentials, control characters, or ambiguity."""
+    if not isinstance(value, str) or any(c.isspace() or ord(c) < 32 for c in value):
+        return False
+    if any(c in value for c in ('\\', '"', '<', '>')):
+        return False
+    try:
+        parsed = urlparse(value)
+        return bool(
+            parsed.scheme == "https" and parsed.hostname
+            and parsed.username is None and parsed.password is None
+            and parsed.port in (None, 443)
+        )
+    except ValueError:
+        return False
+
+
+def _is_allowed_poster_url(value: Any) -> bool:
+    """Feed-controlled poster checks may only contact the two known image CDNs."""
+    if not _is_https_url(value):
+        return False
+    for base in (POSTER_IMG_BASE, TMDB_IMG_BASE):
+        if value.startswith(base + "/"):
+            filename = value[len(base) + 1:]
+            return re.fullmatch(r"[A-Za-z0-9_-]+\.(?:jpg|jpeg|png|webp)", filename) is not None
+    return False
 
 
 def _collect_films(source: Any) -> list[Mapping[str, Any]]:
@@ -632,7 +671,7 @@ def _verify_poster_url(poster_url: str | None) -> str | None:
     returns 403 and TRMNL then renders alt text instead of artwork. Fall back
     to the TMDB CDN (poster paths are TMDB hashes) before omitting the poster.
     """
-    if not poster_url:
+    if not _is_allowed_poster_url(poster_url):
         return None
     candidates = [poster_url]
     fallback = _tmdb_fallback_url(poster_url)
@@ -640,15 +679,16 @@ def _verify_poster_url(poster_url: str | None) -> str | None:
         candidates.append(fallback)
     for candidate in candidates:
         try:
-            response = requests.head(candidate, timeout=15, allow_redirects=True)
+            # A redirect from an allowed CDN must not reach an arbitrary host.
+            response = requests.head(candidate, timeout=15, allow_redirects=False)
         except requests.RequestException as exc:
-            logging.warning("Poster check failed for %s: %s", candidate, exc)
+            logging.warning("Poster check failed (%s)", type(exc).__name__)
             continue
         if response.status_code == 200:
             if candidate != poster_url:
-                logging.info("Poster missing from RevivalHub bucket; using %s", candidate)
+                logging.info("Poster missing from RevivalHub bucket; using TMDB")
             return candidate
-        logging.warning("Poster URL %s returned HTTP %s", candidate, response.status_code)
+        logging.warning("Poster check returned HTTP %s", response.status_code)
     logging.warning("No working poster URL found; omitting poster.")
     return None
 

@@ -47,7 +47,7 @@ Fallback path: the legacy preformatted subtitle string. {% endcomment %}
 {% endif %}
 
 {% assign qr_data = ticket_url | url_encode %}
-{% assign qr_src = "https://api.qrserver.com/v1/create-qr-code/?size=100x100&amp;margin=2&amp;data=" | append: qr_data %}
+{% assign qr_src = "https://api.qrserver.com/v1/create-qr-code/?size=100x100&margin=2&data=" | append: qr_data %}
 
 {% comment %} The deployed plugin also embeds a custom "Marquee" @font-face
 (woff2 data URI) and a .marquee class; kept out of this reference copy for
@@ -56,20 +56,20 @@ readability. See the TRMNL markup editor for the byte-exact deployed version. {%
 <div class="layout layout--col layout--center-x gap--none">
 
   {% if poster_url %}
-    <img class="image image-dither no-shrink mx--auto h--[91cqh] w--auto" src="{{ poster_url }}" alt="{{ title | escape }}" />
+    <img class="image image-dither no-shrink mx--auto h--[91cqh] w--auto" src="{{ poster_url | escape }}" alt="{{ title | escape }}" />
   {% else %}
     <div class="flex flex--center no-shrink bg--black p--8 w--full h--[91cqh]">
-      <span class="title title--xxlarge text--white marquee fallback-title" data-clamp="5">{{ title }}</span>
+      <span class="title title--xxlarge text--white marquee fallback-title" data-clamp="5">{{ title | escape }}</span>
     </div>
   {% endif %}
 
   <div class="flex flex--row flex--center-x flex--center-y grow w--full gap--large px--4">
-    <span class="title title--xxlarge marquee">{{ when_label }}</span>
+    <span class="title title--xxlarge marquee">{{ when_label | escape }}</span>
     {% if when_time != "" %}
-      <span class="title title--xxlarge text--gray-20 marquee">{{ when_time }}</span>
+      <span class="title title--xxlarge text--gray-20 marquee">{{ when_time | escape }}</span>
     {% endif %}
     {% if ticket_url %}
-      <img class="image no-shrink w--[50px] h--[50px]" src="{{ qr_src }}" alt="QR code for tickets" />
+      <img class="image no-shrink w--[50px] h--[50px]" src="{{ qr_src | escape }}" alt="QR code for tickets" />
     {% endif %}
   </div>
 
