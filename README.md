@@ -12,8 +12,8 @@ This repository surfaces the next RevivalHub screening on a TRMNL OG device (800
 ## Requirements
 
 - Python 3.11+
-- `requests` and `certifi>=2026.10.19` (installed from `requirements.txt`)
-- RevivalHub JSON endpoint (public or authenticated)
+- Dependencies from `requirements.txt`, including current Requests, urllib3, and certificate security fixes
+- RevivalHub HTTPS JSON endpoint (public or authenticated through query parameters)
 - TRMNL Private Plugin configured to fetch data via Polling[^dev]
 
 [^dev]: https://usetrmnl.com/blog/developer-edition?utm_source=openai
@@ -46,7 +46,7 @@ The script exits with code 2 if `--fail-on-missing` is set and no matching show 
 The [October 2026 eMudhra CA compromise](https://blog.cloudflare.com/emudhra-certificate-compromise)
 affects HTTPS clients that still trust the affected certificate chains. Requests
 uses a separate CA bundle supplied by `certifi`; updating a browser alone does
-not update that bundle. This project requires `certifi>=2026.10.19`, and the
+not update that bundle. This project requires `certifi>=2026.11.20`, and the
 installation commands above also update pip's own bundled certificate data.
 
 For an existing virtual environment, activate it and rerun both installation
@@ -62,15 +62,44 @@ selected with `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE` require their own updates
 the default-bundle test does not validate those overrides. Keep TLS verification
 enabled when resolving certificate errors.
 
+### Security maintenance
+
+Dependabot checks Python dependencies and GitHub Actions weekly. The separate
+`Tests and dependency security` workflow runs tests and `pip-audit` on pull
+requests, pushes to main, and weekly without access to feed secrets or Pages
+deployment permissions. To run the same dependency audit locally:
+
+```bash
+python -m pip install --upgrade -r requirements.txt -r requirements-dev.txt
+python -m pip_audit --progress-spinner off -r requirements.txt
+```
+
+Feed URLs must use HTTPS without embedded username/password credentials. Use
+the final URL: redirects are rejected to prevent HTTPS downgrades. Endpoint
+URLs and request exception details are omitted from logs, including verbose
+mode. Poster requests are restricted to the RevivalHub resized bucket and
+TMDB's `w500` CDN path, with redirects disabled. Other poster sources require
+an explicit allowlist change. The same URL filtering applies with
+`--skip-poster-check`. Ticket URLs must use HTTPS. The Liquid template escapes
+feed text and image attributes; copy template updates into the TRMNL markup
+editor separately, preserving any custom embedded font.
+
 ## GitHub Action Automation
 
 The workflow in `.github/workflows/revivalhub_sync.yml`:
 
-- Runs on a `0 */4 * * *` cron (every 4 hours) plus manual `workflow_dispatch`.
+- Runs on a `17 */4 * * *` cron (every 4 hours, away from the busy top of the hour) plus manual `workflow_dispatch` on main.
 - Sets up Python, updates pip and dependencies, runs the tests, and executes the sync CLI.
 - Uploads the JSON payload as a build artifact for troubleshooting.
 - Publishes `payload.json` and `plugin_body.json` to GitHub Pages. Point your Private Plugin (Polling) to `plugin_body.json` (it wraps the payload under `{"data": …}` which Liquid reads as `data.*`).[^go]
 - Publishes only after tests and payload generation succeed. A failed certificate check or fetch leaves the previously published site in place.
+- Uses current actions pinned to commit SHAs, with credential persistence disabled. Only the payload step receives the feed secret.
+- Builds and deploys in separate jobs. Only the deploy job has Pages/OIDC permissions; runs queue without cancelling an active deployment.
+
+If deployment reports that the `github-pages` artifact cannot be found even
+though upload succeeded, check GitHub's service status and rerun the failed
+job. This is an artifact-discovery failure; the previously published feed stays
+available. Separate jobs also let you retry deployment without rebuilding.
 
 Configure the following repository **secrets**:
 

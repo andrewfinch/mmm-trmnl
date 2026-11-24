@@ -2,33 +2,30 @@ name: Sync RevivalHub to TRMNL
 
 on:
   schedule:
-    - cron: "0 */4 * * *"
+    - cron: "17 */4 * * *"
   workflow_dispatch:
 
+permissions: {}
+
 concurrency:
-  group: revivalhub-sync-${{ github.ref }}
-  cancel-in-progress: true
+  group: revivalhub-pages
+  cancel-in-progress: false
 
 jobs:
-  sync:
+  build:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
+    timeout-minutes: 10
     permissions:
       contents: read
-      pages: write
-      id-token: write
-    env:
-      REVIVALHUB_URL: ${{ secrets.REVIVALHUB_URL }}
-      REVIVALHUB_THEATRE: ${{ vars.REVIVALHUB_THEATRE }}
-      REVIVALHUB_TIMEZONE: ${{ vars.REVIVALHUB_TIMEZONE }}
-      REVIVALHUB_LOOKAHEAD_HOURS: ${{ vars.REVIVALHUB_LOOKAHEAD_HOURS }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
           cache: "pip"
@@ -43,7 +40,10 @@ jobs:
 
       - name: Build payload (dry run)
         env:
-          REVIVALHUB_URL: ${{ env.REVIVALHUB_URL }}
+          REVIVALHUB_URL: ${{ secrets.REVIVALHUB_URL }}
+          REVIVALHUB_THEATRE: ${{ vars.REVIVALHUB_THEATRE }}
+          REVIVALHUB_TIMEZONE: ${{ vars.REVIVALHUB_TIMEZONE }}
+          REVIVALHUB_LOOKAHEAD_HOURS: ${{ vars.REVIVALHUB_LOOKAHEAD_HOURS }}
         run: |
           set -euo pipefail
           python src/revivalhub_trmnl_sync.py \
@@ -52,31 +52,44 @@ jobs:
             --timezone "${REVIVALHUB_TIMEZONE:-America/Los_Angeles}" \
             --lookahead-hours "${REVIVALHUB_LOOKAHEAD_HOURS:-96}" \
             --dry-run \
-            --verbose \
             --payload-path payload.json
 
       # Golden path: publish payload.json for TRMNL Webhooks (pull model)
 
       - name: Upload payload artifact
-        if: always()
-        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('payload.json') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: trmnl-payload
           path: payload.json
+          retention-days: 7
 
       - name: Prepare Pages artifact
         run: |
           set -euo pipefail
           mkdir -p site
           cp payload.json site/payload.json
-          python -c "import json, pathlib; p=json.load(open('payload.json')); pathlib.Path('site/plugin_body.json').write_text(json.dumps({'data': p, 'debug': True}, indent=2))"
+          python -c "import json, pathlib; p=json.load(open('payload.json')); pathlib.Path('site/plugin_body.json').write_text(json.dumps({'data': p}, indent=2))"
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site
 
+  # Give artifact publication a job boundary and keep deployment credentials
+  # off the runner that installs dependencies and processes external feed data.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 

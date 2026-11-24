@@ -1,4 +1,6 @@
-requests>=2.31.0,<3.0.0
+requests>=2.34.2,<3.0.0
+# Keep the HTTP transport above the September 2026 security fixes.
+urllib3>=2.8.0,<3.0.0
 # Distrust the roots involved in the October 2026 eMudhra CA compromise.
-certifi>=2026.10.19
+certifi>=2026.11.20
 
